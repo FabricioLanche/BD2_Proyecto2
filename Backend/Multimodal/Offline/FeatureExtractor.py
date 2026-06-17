@@ -1,11 +1,10 @@
+import os
 import re
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Set, Tuple, Union
 
 import cv2
 import numpy as np
-import pandas as pd
-import psycopg2
 from nltk.stem.snowball import SnowballStemmer
 
 ChunkInput = Union[str, np.ndarray, Tuple[str, np.ndarray]]
@@ -66,10 +65,9 @@ class ImageFeatureExtractor(BaseFeatureExtractor):
         return descriptors
 
 class TextFeatureExtractor(BaseFeatureExtractor):
-    def __init__(self, connection_params: Dict[str, Any]) -> None:
-        self._conn_params = connection_params
+    def __init__(self, stopwords_path: str = "") -> None:
         self._stemmer = SnowballStemmer("spanish")
-        self._stop_words: Set[str] = self._load_stopwords()
+        self._stop_words: Set[str] = self._load_stopwords(stopwords_path)
 
     @property
     def format(self) -> str:
@@ -89,15 +87,18 @@ class TextFeatureExtractor(BaseFeatureExtractor):
 
         return results, global_vocab
 
-    def _load_stopwords(self) -> Set[str]:
+    def _load_stopwords(self, stopwords_path: str = "") -> Set[str]:
+        if not stopwords_path:
+            stopwords_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "stopwords.txt"
+            )
         try:
-            conn = psycopg2.connect(**self._conn_params)
-            query = "SELECT word FROM stopwords;"
-            df = pd.read_sql(query, conn)
-            conn.close()
-            return set(df["word"].str.lower())
-        except Exception as e:
-            raise ConnectionError(f"Error al cargar stopwords desde PostgreSQL: {e}")
+            with open(stopwords_path, "r", encoding="utf-8") as f:
+                words = {line.strip().lower() for line in f if line.strip()}
+            return words
+        except FileNotFoundError:
+            print(f"Advertencia: no se encontró {stopwords_path}. Usando stopwords vacías.")
+            return set()
 
     def preprocess(self, text: str) -> List[str]:
         # Limpia, tokeniza, filtra stopwords y aplica stemming->lexemas.
@@ -117,9 +118,7 @@ class TextFeatureExtractor(BaseFeatureExtractor):
         return bow
 
 
-# ---------------------------------------------------------------------------
-# Ejemplo de uso (Mock)
-# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     print("=" * 70)
     print("EJEMPLO: ImageFeatureExtractor (formato batch)")
@@ -160,64 +159,19 @@ if __name__ == "__main__":
         ),
     ]
 
-    mock_params = {
-        "dbname": "postgres",
-        "user": "postgres",
-        "password": "postgres",
-        "host": "localhost",
-        "port": "5432",
-    }
+    txt_extractor = TextFeatureExtractor()
 
-    try:
-        txt_extractor = TextFeatureExtractor(mock_params)
+    results, vocab = txt_extractor.extract_features(mock_chunks)
 
-        results, vocab = txt_extractor.extract_features(mock_chunks)
+    print("Chunks de entrada:")
+    for cid, content in mock_chunks:
+        print(f"  {cid}: {content[:60]}...")
+    print()
 
-        print("Chunks de entrada:")
-        for cid, content in mock_chunks:
-            print(f"  {cid}: {content[:60]}...")
-        print()
+    print("Resultados por chunk (BoW local):")
+    for text_id, bow in results:
+        print(f"  {text_id}: {bow}")
 
-        print("Resultados por chunk (BoW local):")
-        for text_id, bow in results:
-            print(f"  {text_id}: {bow}")
-
-        print(f"\nVocabulario global ({len(vocab)} lexemas únicos):")
-        print(f"  {sorted(vocab)}")
-        print(f"Modalidad: {txt_extractor.format}")
-
-    except Exception as e:
-        print(f"No se pudo conectar a PostgreSQL. Usando modo offline de prueba...")
-        print()
-
-        class TextFeatureExtractorOffline(TextFeatureExtractor):
-            def _load_stopwords(self) -> Set[str]:
-                return set()
-
-        txt_extractor = TextFeatureExtractorOffline.__new__(TextFeatureExtractorOffline)
-        txt_extractor._conn_params = {}
-        txt_extractor._stemmer = SnowballStemmer("spanish")
-        txt_extractor._stop_words = set()
-
-        print("Chunks de entrada (offline):")
-        for cid, content in mock_chunks:
-            print(f"  {cid}, {content[:60]}...")
-        print()
-
-        print("Probando preprocess:")
-        tokens = txt_extractor.preprocess(mock_chunks[0][1])
-        print(f"  Tokens (lexemas): {tokens}")
-        print()
-
-        print("Probando compute_bow (chunk 1):")
-        bow = txt_extractor.compute_bow(mock_chunks[0][1])
-        print(f"  {bow}")
-        print()
-
-        results, vocab = txt_extractor.extract_features(mock_chunks)
-        print("Resultados completos (BoW local):")
-        for text_id, bow_dict in results:
-            print(f"  {text_id}: {bow_dict}")
-        print(f"\nVocabulario global ({len(vocab)} lexemas):")
-        print(f"  {sorted(vocab)}")
-        print(f"Modalidad: {txt_extractor.format}")
+    print(f"\nVocabulario global ({len(vocab)} lexemas únicos):")
+    print(f"  {sorted(vocab)}")
+    print(f"Modalidad: {txt_extractor.format}")
