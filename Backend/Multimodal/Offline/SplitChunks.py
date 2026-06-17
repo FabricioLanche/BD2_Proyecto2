@@ -81,8 +81,57 @@ class MultimodalSplitter:
         return chunks
 
     def _split_image(self, image_matrix):
+        #extraer dimensiones (RGB 3 canales o Escala de grises 2 canales)
+        if len(image_matrix.shape) == 3:
+            h, w, channels = image_matrix.shape
+        else:
+            h, w = image_matrix.shape
+            channels = None
 
-        return "split de imagen"
+        patch_h, patch_w = self.image_patch_size
+        overlap_h, overlap_w = self.image_overlap
+
+        #calcular stride para sliding window
+        stride_y = patch_h - overlap_h
+        stride_x = patch_w - overlap_w
+
+        if stride_y <= 0 or stride_x <= 0:
+            raise ValueError("El overlap debe ser estrictamente menor que el tamaño del parche.")
+
+        #si la imagen es más pequeña que el patch, rellenamos hasta el tamaño del patch
+        #si sobra espacio despues de stride, calcula espacio sobrante y rellena
+        pad_h = 0
+        if h < patch_h:
+            pad_h = patch_h - h
+        elif (h - patch_h) % stride_y != 0:
+            pad_h = stride_y - ((h - patch_h) % stride_y)
+
+        pad_w = 0
+        if w < patch_w:
+            pad_w = patch_w - w
+        elif (w - patch_w) % stride_x != 0:
+            pad_w = stride_x - ((w - patch_w) % stride_x)
+
+        #relleno con ceros/negro
+        #((top, bottom), (left, right), (canales_antes, canales_despues))
+        if channels is not None:
+            padded_img = np.pad(image_matrix, ((0, pad_h), (0, pad_w), (0, 0)), mode='constant')
+        else:
+            padded_img = np.pad(image_matrix, ((0, pad_h), (0, pad_w)), mode='constant')
+
+        #sliding window
+        patches_with_coords = []
+        new_h, new_w = padded_img.shape[:2]
+
+        for y in range(0, new_h - patch_h + 1, stride_y):
+            for x in range(0, new_w - patch_w + 1, stride_x):
+                #recortar el patch
+                patch = padded_img[y:y+patch_h, x:x+patch_w]
+                #guardar el parche y su coordenada de origen relativa a la imagen con padding
+                patches_with_coords.append((patch, y, x))
+
+        return patches_with_coords
+
 
 if __name__ == "__main__":
     splitter = MultimodalSplitter(
@@ -98,7 +147,20 @@ if __name__ == "__main__":
         "Parrafo 3: Generación de chunks segun parametros.\n\n"
         "Parrafo 4: ya no se que mas ponerrrrrr."
     )
+
     
     texto_chunks = splitter.split(documento)
     for i, c in enumerate(texto_chunks):
          print(f"[{i+1}] ({len(c)} chars)\n{c}\n")
+
+
+    imagen_simulada = np.ones((250, 250, 3))
+    print("Dimensiones de la imagen original:", imagen_simulada.shape)
+    imagen_chunks = splitter.split(imagen_simulada)
+    
+    print(f"Se generaron {len(imagen_chunks)} parches visuales.")
+    primer_parche, py1, px1 = imagen_chunks[0]
+    ultimo_parche, py_last, px_last = imagen_chunks[-1]
+    
+    print(f"Primer parche:  Coordenada (Y:{py1}, X:{px1}) | Dimensiones: {primer_parche.shape}")
+    print(f"Último parche: Coordenada (Y:{py_last}, X:{px_last}) | Dimensiones: {ultimo_parche.shape}")
