@@ -10,7 +10,7 @@ from nltk.stem.snowball import SnowballStemmer
 
 ChunkInput = Union[str, np.ndarray, Tuple[str, np.ndarray]]
 ImageBatchOutput = List[Tuple[str, np.ndarray]]  # [(image_id, descriptores_Nx128), ...]
-TextChunk = Tuple[str, str]                       # (chunk_id, contenido_texto)
+TextChunk = Tuple[str, str]                  
 TextBatchOutput = List[Tuple[str, Dict[str, int]]]  # [(text_id, bow_dict), ...]
 
 
@@ -35,11 +35,12 @@ class ImageFeatureExtractor(BaseFeatureExtractor):
 
     def extract_features(self, chunks: List[Tuple[str, np.ndarray]]) -> ImageBatchOutput:
         results: ImageBatchOutput = []
-        for chunk_id, chunk_matriz in chunks:
-            image_id = chunk_id.split(":")[0]
+        for image_id, chunk_matriz in chunks:
             descriptors = self.extract_sift_features(chunk_matriz)
             results.append((image_id, descriptors))
         return results
+    
+    # image1, matriz
 
     def extract_sift_features(self, image_input: ChunkInput) -> np.ndarray:
         if isinstance(image_input, tuple):
@@ -77,12 +78,11 @@ class TextFeatureExtractor(BaseFeatureExtractor):
     def extract_features(
         self, chunks: List[TextChunk]
     ) -> Tuple[TextBatchOutput, Set[str]]:
-       
+
         results: TextBatchOutput = []
         global_vocab: Set[str] = set()
 
-        for chunk_id, content in chunks:
-            text_id = chunk_id.split(":")[0]
+        for text_id, content in chunks:
             bow = self.compute_bow(content)
             results.append((text_id, bow))
             global_vocab.update(bow.keys())
@@ -115,3 +115,109 @@ class TextFeatureExtractor(BaseFeatureExtractor):
         for token in tokens:
             bow[token] = bow.get(token, 0) + 1
         return bow
+
+
+# ---------------------------------------------------------------------------
+# Ejemplo de uso (Mock)
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    print("=" * 70)
+    print("EJEMPLO: ImageFeatureExtractor (formato batch)")
+    print("=" * 70)
+
+    dummy_img = np.random.randint(0, 256, (200, 200, 3), dtype=np.uint8)
+
+    chunks_mock: List[Tuple[str, np.ndarray]] = [
+        ("product_001", dummy_img[:100, :100]),
+        ("product_001", dummy_img[:100, 100:]),
+        ("product_001", dummy_img[100:, :100]),
+        ("product_001", dummy_img[100:, 100:]),
+    ]
+
+    img_ext = ImageFeatureExtractor()
+    batch_result = img_ext.extract_features(chunks_mock)
+
+    print(f"Total chunks procesados: {len(batch_result)}")
+    for img_id, desc in batch_result:
+        print(f"  {img_id} -> descriptores {desc.shape}")
+    print(f"Modalidad: {img_ext.format}")
+    print()
+
+    print("=" * 70)
+    print("EJEMPLO: TextFeatureExtractor")
+    print("=" * 70)
+
+    mock_chunks: List[TextChunk] = [
+        (
+            "text_001",
+            "El comercio electrónico está transformando la economía digital. "
+            "Las empresas deben arreglar sus estrategias de venta online.",
+        ),
+        (
+            "text_001",
+            "La inteligencia artificial y el aprendizaje automático están "
+            "revolucionando la industria de la moda en todo el mundo.",
+        ),
+    ]
+
+    mock_params = {
+        "dbname": "postgres",
+        "user": "postgres",
+        "password": "postgres",
+        "host": "localhost",
+        "port": "5432",
+    }
+
+    try:
+        txt_extractor = TextFeatureExtractor(mock_params)
+
+        results, vocab = txt_extractor.extract_features(mock_chunks)
+
+        print("Chunks de entrada:")
+        for cid, content in mock_chunks:
+            print(f"  {cid}: {content[:60]}...")
+        print()
+
+        print("Resultados por chunk (BoW local):")
+        for text_id, bow in results:
+            print(f"  {text_id}: {bow}")
+
+        print(f"\nVocabulario global ({len(vocab)} lexemas únicos):")
+        print(f"  {sorted(vocab)}")
+        print(f"Modalidad: {txt_extractor.format}")
+
+    except Exception as e:
+        print(f"No se pudo conectar a PostgreSQL. Usando modo offline de prueba...")
+        print()
+
+        class TextFeatureExtractorOffline(TextFeatureExtractor):
+            def _load_stopwords(self) -> Set[str]:
+                return set()
+
+        txt_extractor = TextFeatureExtractorOffline.__new__(TextFeatureExtractorOffline)
+        txt_extractor._conn_params = {}
+        txt_extractor._stemmer = SnowballStemmer("spanish")
+        txt_extractor._stop_words = set()
+
+        print("Chunks de entrada (offline):")
+        for cid, content in mock_chunks:
+            print(f"  {cid}, {content[:60]}...")
+        print()
+
+        print("Probando preprocess:")
+        tokens = txt_extractor.preprocess(mock_chunks[0][1])
+        print(f"  Tokens (lexemas): {tokens}")
+        print()
+
+        print("Probando compute_bow (chunk 1):")
+        bow = txt_extractor.compute_bow(mock_chunks[0][1])
+        print(f"  {bow}")
+        print()
+
+        results, vocab = txt_extractor.extract_features(mock_chunks)
+        print("Resultados completos (BoW local):")
+        for text_id, bow_dict in results:
+            print(f"  {text_id}: {bow_dict}")
+        print(f"\nVocabulario global ({len(vocab)} lexemas):")
+        print(f"  {sorted(vocab)}")
+        print(f"Modalidad: {txt_extractor.format}")
