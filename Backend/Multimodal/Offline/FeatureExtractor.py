@@ -8,7 +8,7 @@ import numpy as np
 from nltk.stem.snowball import SnowballStemmer
 
 ChunkInput = Union[str, np.ndarray, Tuple[str, np.ndarray]]
-ImageBatchOutput = List[Tuple[str, np.ndarray]]  # [(image_id, descriptores_Nx128), ...]
+ImageBatchOutput = List[Tuple[str, np.ndarray]]  # [(image_id, vector_128d), ...] — un tuple por descriptor
 TextChunk = Tuple[str, str]                  
 TextBatchOutput = List[Tuple[str, Dict[str, int]]]  # [(text_id, bow_dict), ...]
 
@@ -36,10 +36,9 @@ class ImageFeatureExtractor(BaseFeatureExtractor):
         results: ImageBatchOutput = []
         for image_id, chunk_matriz in chunks:
             descriptors = self.extract_sift_features(chunk_matriz)
-            results.append((image_id, descriptors))
+            for i in range(descriptors.shape[0]):
+                results.append((image_id, descriptors[i]))
         return results
-    
-    # image1, matriz
 
     def extract_sift_features(self, image_input: ChunkInput) -> np.ndarray:
         if isinstance(image_input, tuple):
