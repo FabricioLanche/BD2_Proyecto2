@@ -22,7 +22,7 @@ def generate_image_histograms(
             axis=1,
         )
 
-        codeword = int(np.argmin(dists))
+        codeword_id = int(np.argmin(dists))
 
         if image_id not in histograms:
             histograms[image_id] = np.zeros(
@@ -30,8 +30,8 @@ def generate_image_histograms(
                 dtype=np.float32,
             )
 
-        histograms[image_id][codeword] += 1
-        spimi_stream.append((image_id, codeword))
+        histograms[image_id][codeword_id] += 1
+        spimi_stream.append((image_id, codeword_id))
 
     histograms = list(histograms.items())
     return codebook, histograms, spimi_stream
@@ -63,7 +63,7 @@ def generate_text_histograms(
         histogram = bow[codebook_idx]
         histograms.append((doc_id, histogram))
 
-        for idx in codebook_idx:
-            spimi_stream.append((doc_id, idx))
+        for codeword_id in codebook_idx:
+            spimi_stream.append((doc_id, codeword_id))
 
     return codebook, histograms, spimi_stream
