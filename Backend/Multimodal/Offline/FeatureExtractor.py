@@ -7,10 +7,10 @@ import cv2
 import numpy as np
 from nltk.stem.snowball import SnowballStemmer
 
-ChunkInput = Union[str, np.ndarray, Tuple[str, np.ndarray]]
-ImageBatchOutput = List[Tuple[str, np.ndarray]]  # [(image_id, vector_128d), ...] — un tuple por descriptor
-TextChunk = Tuple[str, str]                  
-TextBatchOutput = List[Tuple[str, Dict[str, int]]]  # [(text_id, bow_dict), ...]
+ChunkInput = Union[str, np.ndarray, Tuple[int, np.ndarray]]
+ImageBatchOutput = List[Tuple[int, np.ndarray]]  # [(image_id, vector_128d), ...] — un tuple por descriptor
+TextChunk = Tuple[int, str]                  
+TextBatchOutput = List[Tuple[int, Dict[str, int]]]  # [(text_id, bow_dict), ...]
 
 
 class BaseFeatureExtractor(ABC):
@@ -32,7 +32,7 @@ class ImageFeatureExtractor(BaseFeatureExtractor):
     def format(self) -> str:
         return "image"
 
-    def extract_features(self, chunks: List[Tuple[str, np.ndarray]]) -> ImageBatchOutput:
+    def extract_features(self, chunks: List[Tuple[int, np.ndarray]]) -> ImageBatchOutput:
         results: ImageBatchOutput = []
         for image_id, chunk_matriz in chunks:
             descriptors = self.extract_sift_features(chunk_matriz)
@@ -65,7 +65,7 @@ class ImageFeatureExtractor(BaseFeatureExtractor):
 
 class TextFeatureExtractor(BaseFeatureExtractor):
     def __init__(self, stopwords_path: str = "") -> None:
-        self._stemmer = SnowballStemmer("spanish")
+        self._stemmer = SnowballStemmer("english")
         self._stop_words: Set[str] = self._load_stopwords(stopwords_path)
 
     @property
@@ -102,7 +102,7 @@ class TextFeatureExtractor(BaseFeatureExtractor):
     def preprocess(self, text: str) -> List[str]:
         # Limpia, tokeniza, filtra stopwords y aplica stemming->lexemas.
         text = text.lower()
-        tokens = re.findall(r"\b[a-záéíóúñ0-9]+\b", text)
+        tokens = re.findall(r"\b[a-z0-9]+\b", text)
         tokens = [t for t in tokens if t not in self._stop_words]
         tokens = [self._stemmer.stem(t) for t in tokens]
         return tokens
