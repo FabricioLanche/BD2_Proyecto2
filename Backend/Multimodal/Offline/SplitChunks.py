@@ -14,6 +14,7 @@ class MultimodalSplitter:
         self.image_overlap = image_overlap
         
         self.separators = ["\n\n", "\n", " ", ""]
+        self.image_sequence_id = 1
 
     def split(self, data):
         if isinstance(data, str):
@@ -120,17 +121,20 @@ class MultimodalSplitter:
             padded_img = np.pad(image_matrix, ((0, pad_h), (0, pad_w)), mode='constant')
 
         #sliding window
-        patches_with_coords = []
+        patches_out= []
         new_h, new_w = padded_img.shape[:2]
+        current_id = self.image_sequence_id
 
         for y in range(0, new_h - patch_h + 1, stride_y):
             for x in range(0, new_w - patch_w + 1, stride_x):
                 #recortar el patch
                 patch = padded_img[y:y+patch_h, x:x+patch_w]
-                #guardar el parche y su coordenada de origen relativa a la imagen con padding
-                patches_with_coords.append((patch, y, x))
 
-        return patches_with_coords
+                #guardar tupla (id,patch)
+                patches_out.append((current_id, patch))
+        self.image_sequence_id += 1
+
+        return patches_out
 
 
 if __name__ == "__main__":
@@ -153,14 +157,29 @@ if __name__ == "__main__":
     for i, c in enumerate(texto_chunks):
          print(f"[{i+1}] ({len(c)} chars)\n{c}\n")
 
+    # Prueba con imagen de ejemplo (matriz aleatoria)
+    # Imagen A: 250x250 (Debería generar 9 parches con ID 1)
+    imagen_A = np.ones((250, 250, 3)) 
+    
+    # Imagen B: 150x150 (Debería generar 4 parches con ID 2)
+    imagen_B = np.zeros((150, 150, 3))
 
-    imagen_simulada = np.ones((250, 250, 3))
-    print("Dimensiones de la imagen original:", imagen_simulada.shape)
-    imagen_chunks = splitter.split(imagen_simulada)
+    # Procesamos la primera imagen
+    chunks_A = splitter.split(imagen_A)
+    print(f"\nProcesando Imagen A {imagen_A.shape}:")
+    print(f"Total de parches: {len(chunks_A)}")
     
-    print(f"Se generaron {len(imagen_chunks)} parches visuales.")
-    primer_parche, py1, px1 = imagen_chunks[0]
-    ultimo_parche, py_last, px_last = imagen_chunks[-1]
+    id_A_primero, patch_A_primero = chunks_A[0]
+    id_A_ultimo, patch_A_ultimo = chunks_A[-1]
+    print(f"Primer parche -> ID de Imagen: {id_A_primero} | Dimensiones: {patch_A_primero.shape}")
+    print(f"Último parche -> ID de Imagen: {id_A_ultimo} | Dimensiones: {patch_A_ultimo.shape}")
+
+    # Procesamos la segunda imagen
+    chunks_B = splitter.split(imagen_B)
+    print(f"\nProcesando Imagen B {imagen_B.shape}:")
+    print(f"Total de parches: {len(chunks_B)}")
     
-    print(f"Primer parche:  Coordenada (Y:{py1}, X:{px1}) | Dimensiones: {primer_parche.shape}")
-    print(f"Último parche: Coordenada (Y:{py_last}, X:{px_last}) | Dimensiones: {ultimo_parche.shape}")
+    id_B_primero, patch_B_primero = chunks_B[0]
+    id_B_ultimo, patch_B_ultimo = chunks_B[-1]
+    print(f"Primer parche -> ID de Imagen: {id_B_primero} | Dimensiones: {patch_B_primero.shape}")
+    print(f"Último parche -> ID de Imagen: {id_B_ultimo} | Dimensiones: {patch_B_ultimo.shape}")
