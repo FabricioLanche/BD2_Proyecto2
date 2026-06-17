@@ -142,6 +142,26 @@ class HeapFile:
 
             page_id = posting_page.NEXT_PAGE
 
+    def upsert_posting(self, start_page_id: int, posting: PostingEntry) -> None:
+        page_id = start_page_id
+        while True:
+            page = self.read_page(page_id)
+            posting_page = PostingPage.from_page(page)
+
+            for i, entry in enumerate(posting_page.POSTING_LIST):
+                if entry.DOC_ID == posting.DOC_ID:
+                    posting_page.POSTING_LIST[i] = PostingEntry(
+                        posting.DOC_ID, entry.TF + posting.TF
+                    )
+                    self.write_page(posting_page.to_page(self.FILE_HEADER.PAGE_SIZE))
+                    return
+
+            if posting_page.NEXT_PAGE == -1:
+                break
+            page_id = posting_page.NEXT_PAGE
+
+        self.append_to_posting_list(start_page_id, posting)
+
     def read_posting_list(self, start_page_id: int) -> list[PostingEntry]:
         result = []
         page_id = start_page_id

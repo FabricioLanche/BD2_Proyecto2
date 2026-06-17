@@ -253,7 +253,7 @@ class BPlusTree:
         else:
             self._save_node(parent)
 
-    def insert(self, codeword_id: int, posting: tuple[int, int]):
+    def insert_posting(self, codeword_id: int, posting: tuple[int, int]):
         leaf = self._find_leaf(codeword_id)
         for entry in leaf.ENTRIES:
             if entry.KEY == codeword_id:
@@ -266,35 +266,29 @@ class BPlusTree:
         )
         self._insert_into_leaf(leaf, NodeEntry(codeword_id, heap_page_id))
 
-    def remove(self, codeword_id: int) -> bool:
-        leaf = self._find_leaf(codeword_id)
-        for i, entry in enumerate(leaf.ENTRIES):
-            if entry.KEY == codeword_id:
-                leaf.ENTRIES.pop(i)
-                leaf.PAGE_HEADER.N_ENTRIES = len(leaf.ENTRIES)
-                self._save_node(leaf)
-                return True
-        return False
+    def scan(self):
+        page_id = self.BPLUS_TREE_FILE.FILE_HEADER.ROOT_PAGE
+        node = self._load_node(page_id)
+        while not node.PAGE_HEADER.IS_LEAF:
+            page_id = node.FIRST_PTR
+            node = self._load_node(page_id)
+        while True:
+            for entry in node.ENTRIES:
+                posting_list = self.HEAP_FILE.read_posting_list(entry.PTR)
+                yield (entry.KEY, posting_list)
+            if node.PAGE_HEADER.NEXT_LEAF == -1:
+                break
+            node = self._load_node(node.PAGE_HEADER.NEXT_LEAF)
 
-    def search(self, codeword_id: int) -> list[tuple[int, int]] | None:
+    def upsert_posting(self, codeword_id: int, posting: tuple[int, int]) -> None:
         leaf = self._find_leaf(codeword_id)
         for entry in leaf.ENTRIES:
             if entry.KEY == codeword_id:
-                posting_list = self.HEAP_FILE.read_posting_list(entry.PTR)
-                return [(p.DOC_ID, p.TF) for p in posting_list]
-        return None
-
-    def range_search(self, codeword_id_start: int, codeword_id_end: int) -> list[tuple[int, int]]:
-        results = []
-        leaf = self._find_leaf(codeword_id_start)
-        while leaf is not None:
-            for entry in leaf.ENTRIES:
-                if entry.KEY > codeword_id_end:
-                    return results
-                if entry.KEY >= codeword_id_start:
-                    posting_list = self.HEAP_FILE.read_posting_list(entry.PTR)
-                    results.extend([(p.DOC_ID, p.TF) for p in posting_list])
-            if leaf.PAGE_HEADER.NEXT_LEAF == -1:
-                break
-            leaf = self._load_node(leaf.PAGE_HEADER.NEXT_LEAF)
-        return results
+                self.HEAP_FILE.upsert_posting(
+                    entry.PTR, PostingEntry(posting[0], posting[1])
+                )
+                return
+        heap_page_id = self.HEAP_FILE.create_posting_page(
+            PostingEntry(posting[0], posting[1])
+        )
+        self._insert_into_leaf(leaf, NodeEntry(codeword_id, heap_page_id))

@@ -4,7 +4,6 @@ def generate_image_histograms(
     features: list[tuple[int, np.ndarray]],
     codebook: list[np.ndarray],
 ) -> tuple[
-    list[np.ndarray],
     list[tuple[int, np.ndarray]],
     list[tuple[int, int]]
 ]:
@@ -34,14 +33,13 @@ def generate_image_histograms(
         spimi_stream.append((image_id, codeword_id))
 
     histograms = list(histograms.items())
-    return codebook, histograms, spimi_stream
+    return histograms, spimi_stream
 
 def generate_text_histograms(
     features: list[tuple[int, np.ndarray]],
     codebook: list[str],
     vocabulary: np.ndarray,
 ) -> tuple[
-    list[str],
     list[tuple[int, np.ndarray]],
     list[tuple[int, int]]
 ]:
@@ -66,4 +64,4 @@ def generate_text_histograms(
         for codeword_id in codebook_idx:
             spimi_stream.append((doc_id, codeword_id))
 
-    return codebook, histograms, spimi_stream
+    return histograms, spimi_stream
