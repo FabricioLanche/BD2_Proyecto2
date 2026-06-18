@@ -1,11 +1,8 @@
-from typing import (Iterator, Iterable, Tuple, List)
-
+from typing import (Iterator, Iterable, Tuple, List, Dict)
+from sklearn.cluster import MiniBatchKMeans
 from collections import Counter
-
 import numpy as np
 
-from sklearn.cluster import MiniBatchKMeans
-from sklearn.preprocessing import normalize
 
 class VisualCodebookBuilder:
 
@@ -15,25 +12,19 @@ class VisualCodebookBuilder:
         self.k_candidates = list(k_candidates)
         self.random_state = random_state
 
-    # batchs de vectores, normalizados
+    # Creación de batches
     def _batch_generator(self, data: Iterator[Tuple[str, np.ndarray]]) -> Iterator[np.ndarray]:
         batch = []
-
         for _, vector in data:                                                                                                            
             batch.append(vector)
             if len(batch) == self.batch_size:
-                yield self._normalize(batch)
-                batch = []
+                yield np.array(batch)
+                batch=[]
 
         if batch:
-            yield self._normalize(batch)
-
-    # normalizacion l2 por el feature SIFT
-    def _normalize(self, vectors: List[np.ndarray]) -> np.ndarray:
-        matrix = np.asarray(vectors)
-        return normalize(matrix, norm="l2")
+            yield np.array(batch)
     
-    # experimento para encontrar el k ideal
+    # Experimento para encontrar el k ideal con incercia
     def _estimate_inertia(self, data_factory, k: int) -> float:
         model = MiniBatchKMeans(n_clusters=k, batch_size=self.batch_size, random_state=self.random_state)
 
@@ -41,7 +32,8 @@ class VisualCodebookBuilder:
             model.partial_fit(batch)
 
         return model.inertia_
-
+    
+    # Selector del k optimo basado en el metodo del codo
     def _select_k(self, data_factory) -> int:
         inertias = {}
 
@@ -49,10 +41,8 @@ class VisualCodebookBuilder:
             inertia = self._estimate_inertia(data_factory, k)
             inertias[k] = inertia
 
-
         ks = list(inertias.keys())
         improvements = []
-
 
         for i in range(1, len(ks)):
             prev = inertias[ks[i-1]]
@@ -66,12 +56,10 @@ class VisualCodebookBuilder:
             return ks[0]
 
         elbow_index = np.argmin(improvements)
-
         return ks[elbow_index + 1]
     
-    # modelo final
+    # Modelo final
     def build(self, data_factory) -> np.ndarray:
-        
         best_k = self._select_k(data_factory)
         print(f"K seleccionado: {best_k}")
 
@@ -82,18 +70,23 @@ class VisualCodebookBuilder:
 
         return model.cluster_centers_
 
-
 class TextCodebookBuilder:
 
-    def __init__(self):
-        pass
+    def __init__(self, vocabulary: List[str], chunks: List[Tuple[int, Dict[str, int]]], k: int = 100) -> List[str]:
 
-    # cuenta las palabras y devuelve las mas comunes
-    def build(self, documents: Iterator[Tuple[str, list[str]]], top_k: int = 100) -> List[str]:
-        counter = Counter()
+        self.vocabulary = vocabulary
+        self.chunks = chunks
+        self.k = k
+        
+    # Frecuencia global de las palabras basadas en el vocabulario
+    def build(self) -> List[str]:
+        global_frequency = Counter()
 
-        for _, tokens in documents:
+        for _, bow in self.chunks:
+            global_frequency.update(bow)
 
-            counter.update(tokens)
+        top_words = global_frequency.most_common(self.k)
 
-        return [word for word, _ in counter.most_common(top_k)] #sorted
+        codebook = [word for word, freq in top_words]
+
+        return codebook
