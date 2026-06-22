@@ -2,7 +2,7 @@ import numpy as np
 
 class MultimodalSplitter:
     def __init__(self, 
-                 chunk_size=100, overlap=20, 
+                 chunk_size=160, overlap=0, 
                  image_patch_size=(64, 64), image_overlap=(0, 0)):
         """
         Splitter Multimodal con Chunking Recursivo por caracter para texto, overlap y chunk_size medido en caracteres.
@@ -16,21 +16,22 @@ class MultimodalSplitter:
         self.separators = ["\n\n", "\n", " ", ""]
         self.image_sequence_id = 1
 
-    def split(self, data):
+    def split(self, doc_id, data):
         if isinstance(data, str):
-            return self._split_text(data)
+            return self._split_text(data, doc_id)
         elif isinstance(data, np.ndarray):
             return self._split_image(data)
         else:
             raise TypeError("Formato no soportado. Debe ser 'str' o 'np.ndarray'.")
 
 
-    def _split_text(self, text):
+    def _split_text(self, text, doc_id):
         if not text.strip(): return []
             
         atomic_units = self._recursive_split(text)
+        chunks = self._merge_splits(atomic_units)
 
-        return self._merge_splits(atomic_units)
+        return [(doc_id, chunk) for chunk in chunks]
 
     def _recursive_split(self, text, sep_index=0):
         """Función recursiva que divide el texto siguiendo los separadores proporcionados cuando uno excede el tamaño del chunk."""
@@ -137,49 +138,3 @@ class MultimodalSplitter:
         return patches_out
 
 
-if __name__ == "__main__":
-    splitter = MultimodalSplitter(
-        chunk_size=100, 
-        overlap=20, 
-        image_patch_size=(100, 100), 
-        image_overlap=(0, 0)
-    )
-
-    documento = (
-        "Parrafo 1: Proyecto de BII :,).\n\n"
-        "Parrafo 2: Splitchunk de prueba para texto e imagen agnostico a a a a a a a a a a a a a a a a a a a a a a a a a a a a aa a a aa a a a a a a a a a a a aa a a a a a a aa a a aa a aaaa a a a a a a a aa a a a  aaaa aa a a a a aa a a aa aaaaaa aa aaa aa a a a aa a aabbb bb b b b bbb bbbbbbbb bb b b a aa a aaaa  a aaaa a  aaaa a a aa aa aa  aaaa a aaa a aaaa  aa aa aaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.\n\n"
-        "Parrafo 3: Generación de chunks segun parametros.\n\n"
-        "Parrafo 4: ya no se que mas ponerrrrrr."
-    )
-
-    
-    texto_chunks = splitter.split(documento)
-    for i, c in enumerate(texto_chunks):
-         print(f"[{i+1}] ({len(c)} chars)\n{c}\n")
-
-    # Prueba con imagen de ejemplo (matriz aleatoria)
-    # Imagen A: 250x250 (Debería generar 9 parches con ID 1)
-    imagen_A = np.ones((250, 250, 3)) 
-    
-    # Imagen B: 150x150 (Debería generar 4 parches con ID 2)
-    imagen_B = np.zeros((150, 150, 3))
-
-    # Procesamos la primera imagen
-    chunks_A = splitter.split(imagen_A)
-    print(f"\nProcesando Imagen A {imagen_A.shape}:")
-    print(f"Total de parches: {len(chunks_A)}")
-    
-    id_A_primero, patch_A_primero = chunks_A[0]
-    id_A_ultimo, patch_A_ultimo = chunks_A[-1]
-    print(f"Primer parche -> ID de Imagen: {id_A_primero} | Dimensiones: {patch_A_primero.shape}")
-    print(f"Último parche -> ID de Imagen: {id_A_ultimo} | Dimensiones: {patch_A_ultimo.shape}")
-
-    # Procesamos la segunda imagen
-    chunks_B = splitter.split(imagen_B)
-    print(f"\nProcesando Imagen B {imagen_B.shape}:")
-    print(f"Total de parches: {len(chunks_B)}")
-    
-    id_B_primero, patch_B_primero = chunks_B[0]
-    id_B_ultimo, patch_B_ultimo = chunks_B[-1]
-    print(f"Primer parche -> ID de Imagen: {id_B_primero} | Dimensiones: {patch_B_primero.shape}")
-    print(f"Último parche -> ID de Imagen: {id_B_ultimo} | Dimensiones: {patch_B_ultimo.shape}")
