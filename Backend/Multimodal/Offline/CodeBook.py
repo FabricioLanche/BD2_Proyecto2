@@ -13,7 +13,7 @@ class VisualCodebookBuilder:
         self.random_state = random_state
 
     # Creación de batches
-    def _batch_generator(self, data: Iterator[Tuple[str, np.ndarray]]) -> Iterator[np.ndarray]:
+    def _batch_generator(self, data: Iterator[Tuple[int, np.ndarray]]) -> Iterator[np.ndarray]:
         batch = []
         for _, vector in data:                                                                                                            
             batch.append(vector)
