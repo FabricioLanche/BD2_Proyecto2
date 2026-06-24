@@ -5,6 +5,9 @@ from pathlib import Path
 import numpy as np
 import pickle
 
+DATA_DIR = Path(__file__).resolve().parent.parent / "Data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
 class VisualCodebookBuilder:
 
     def __init__(self, batch_size: int = 1024, k_candidates: Iterable[int] = range(10, 101, 10), random_state: int = 42):
@@ -60,7 +63,7 @@ class VisualCodebookBuilder:
         return ks[elbow_index + 1]
     
     # Modelo final
-    def build(self, data_factory, output_dir: str, filename: str = "visual_codebook.pkl") -> np.ndarray:
+    def build(self, data_factory, filename: str = "visual_codebook.pkl") -> np.ndarray:
         best_k = self._select_k(data_factory)
         print(f"K seleccionado: {best_k}")
 
@@ -71,10 +74,7 @@ class VisualCodebookBuilder:
         
         codebook = model.cluster_centers_
 
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
-
-        with open(output_path / filename, "wb") as f:
+        with open(DATA_DIR / filename, "wb") as f:
             pickle.dump(codebook, f)
 
         return codebook
@@ -88,7 +88,7 @@ class TextCodebookBuilder:
         self.k = k
         
     # Frecuencia global de las palabras basadas en el vocabulario
-    def build(self, output_dir: str, filename: str = "text_codebook.pkl") -> List[str]:
+    def build(self, filename: str = "text_codebook.pkl") -> List[str]:
         global_frequency = Counter()
 
         for _, bow in self.chunks:
@@ -97,10 +97,7 @@ class TextCodebookBuilder:
         top_words = global_frequency.most_common(self.k)
         codebook = [word for word, freq in top_words]
 
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
-
-        with open(output_path / filename, "wb") as f:
+        with open(DATA_DIR / filename, "wb") as f:
             pickle.dump(codebook, f)
 
         return codebook
