@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-from fastapi import APIRouter, UploadFile, File, Form
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -36,3 +36,12 @@ async def multimodal_search(
         image_bytes, text_query, weight_visual, weight_text, top_k
     )
     return {"results": results}
+
+@router.get("/details/{doc_id}")
+async def get_details(doc_id: str):
+    details = search_service.get_product_details(doc_id)
+    
+    if not details:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+        
+    return {"product": details}

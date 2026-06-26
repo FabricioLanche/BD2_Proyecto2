@@ -36,17 +36,27 @@ class SearchService:
             results.append({
                 "id": doc_id,
                 "name": meta.get("ProductDisplayName", "Unknown"), 
-                "category": meta.get("masterCategory", ""), 
-                "image_url": meta.get("image_url", ""),
-                "match_percentage": match_pct,
-                "details": {
-                    "gender": meta.get("gender", ""),
-                    "subcategory": meta.get("subcategory", ""),
-                    "type": meta.get("articletype", ""), 
-                    "colour": meta.get("baseColour", ""), 
-                    "season": meta.get("season", ""),
-                    "year": meta.get("year", ""),
-                    "usage": meta.get("usage", "")
-                }
+                "match_percentage": match_pct
             })
         return results
+
+    def get_product_details(self, doc_id: str):
+        meta = self.db.get_product_metadata(doc_id)
+        if not meta:
+            return None
+            
+        return {
+            "id": doc_id,
+            "name": meta.get("ProductDisplayName", "Unknown"), 
+            "category": meta.get("masterCategory", ""), 
+            "image_url": meta.get("image_url", ""),
+            "details": {
+                "gender": meta.get("gender", ""),
+                "subcategory": meta.get("subcategory", ""),
+                "type": meta.get("articletype", ""), 
+                "colour": meta.get("baseColour", ""), 
+                "season": meta.get("season", ""),
+                "year": meta.get("year", ""),
+                "usage": meta.get("usage", "")
+            }
+        }
