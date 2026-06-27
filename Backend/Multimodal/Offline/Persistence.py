@@ -1,5 +1,9 @@
 import psycopg2
+import logging
 from psycopg2.extras import execute_values
+from pgvector.psycopg2 import register_vector
+
+logger = logging.getLogger(__name__)
 
 class PersistenceManager:
 
@@ -13,61 +17,94 @@ class PersistenceManager:
             password=password
         )
 
-        self.cursor = self.connection.cursor()
+        register_vector(self.connection)
+
+    def _get_cursor(self):
+        return self.connection.cursor()
     
     def create_tables(self):
 
-        self.cursor.execute("""
-            CREATE EXTENSION IF NOT EXISTS vector;
+        with self._get_cursor() as cursor:
+            try:
 
-            DROP TABLE IF EXISTS descriptors;
+                cursor.execute("""
+                    CREATE EXTENSION IF NOT EXISTS vector;
 
-            CREATE TABLE descriptors (
-                doc_id INTEGER PRIMARY KEY,
-                url TEXT,
-                texto TEXT,
-                texto_vector TSVECTOR GENERATED ALWAYS AS (
-                    to_tsvector('english', coalesce(texto, ''))
-                ) STORED,
-                image_histogram VECTOR(128)
-            );
-        """)
+                    DROP TABLE IF EXISTS descriptors;
 
-        self.connection.commit()
+                    CREATE TABLE descriptors (
+                        doc_id INTEGER PRIMARY KEY,
+                        url TEXT,
+                        texto TEXT,
+                        texto_vector TSVECTOR GENERATED ALWAYS AS (
+                            to_tsvector('english', coalesce(texto, ''))
+                        ) STORED,
+                        image_histogram VECTOR(128)
+                    );
+                """)
+
+                self.connection.commit()
+            except Exception as e:
+                self.connection.rollback()
+                logger.error(f"Error creando tablas: {e}")
+                raise
 
 # hablar con el orquestador para definir los nombres de las columnas
-    def insert_document(self, df):
+    def insert_document(self, df, page_size = 5000):
 
         rows = [
             (int(row.doc_id), row.url, row.texto)
             for row in df.itertuples(index=False)
         ]
 
-        execute_values(
-            self.cursor,
-            """
-            INSERT INTO descriptors (doc_id, url, texto)
-            VALUES %s
-            ON CONFLICT (doc_id) DO UPDATE SET
-                url = EXCLUDED.url,
-                texto = EXCLUDED.texto;
-            """,
-            rows,
-        )
+        with self._get_cursor() as cursor:
+            try:
+                execute_values(
+                    cursor,
+                    """
+                    INSERT INTO descriptors (doc_id, url, texto)
+                    VALUES %s
+                    ON CONFLICT (doc_id) DO UPDATE SET
+                        url = EXCLUDED.url,
+                        texto = EXCLUDED.texto;
+                    """,
+                    rows,
+                    page_size = page_size,
+                )
+                self.connection.commit()
+                logger.info(f"Insertados/actualizados {len(rows)} documentos.")
+            except Exception as e:
+                self.connection.rollback()
+                logger.error(f"Error en insert_document: {e}")
+                raise
 
-        self.connection.commit()
+    def update_histograms(self, histograms, page_size=5000):
 
-    def update_histogram(self, doc_id, histogram):
-        self.cursor.execute(
-            """
-            UPDATE descriptors
-            SET image_histogram = %s
-            WHERE doc_id = %s;
-            """,
-            (histogram, doc_id),
-        )
-        self.connection.commit()
+        rows = [
+            (int(doc_id), histogram)
+            for doc_id, histogram in histograms
+        ]
+
+        with self._get_cursor() as cursor:
+            try: 
+                execute_values(
+                    cursor,
+                    """
+                    UPDATE descriptors AS d
+                    SET image_histogram = data.image_histogram
+                    FROM (VALUES %s) AS data(doc_id, image_histogram)
+                    WHERE d.doc_id = data.doc_id;
+                    """,
+                    rows,
+                    page_size=page_size
+                )
+                self.connection.commit()
+                logger.info(f"Histogramas actualizados: {len(rows)}")
+            except Exception as e:
+                self.connection.rollback()
+                logger.error(f"Error en update_histograms: {e}")
+                raise
 
     def close(self):
-        self.cursor.close()
-        self.connection.close()
+        if self.connection and not self.connection.closed:
+            self.connection.close()
