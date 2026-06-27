@@ -4,9 +4,11 @@ interface UploadZoneProps {
   imagePreview?: string | null
   onUpload: (file: File) => void
   onClear?: () => void
+  label?: string
+  subLabel?: string
 }
 
-export default function UploadZone({ imagePreview, onUpload, onClear }: UploadZoneProps) {
+export default function UploadZone({ imagePreview, onUpload, onClear, label = 'Drop a photo here', subLabel = 'Or click to browse your files' }: UploadZoneProps) {
   const inputRef = useRef<HTMLInputElement>(null)
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -45,8 +47,8 @@ export default function UploadZone({ imagePreview, onUpload, onClear }: UploadZo
       ) : (
         <>
           <span className="material-symbols-outlined text-[44px] text-on-surface-variant/60 group-hover:text-primary/60 transition-colors mb-stack-sm">cloud_upload</span>
-          <p className="font-label-md text-label-md text-on-surface">Upload a product image</p>
-          <p className="font-body-md text-body-md text-on-surface-variant/60 mt-1 max-w-[260px]">Drag and drop or click to browse</p>
+          <p className="font-label-md text-label-md text-on-surface">{label}</p>
+          <p className="font-body-md text-body-md text-on-surface-variant/60 mt-1 max-w-[260px]">{subLabel}</p>
         </>
       )}
       <input ref={inputRef} className="hidden" type="file" accept="image/*" onChange={handleFile} />

@@ -65,11 +65,11 @@ export default function RecommendationEngine() {
       <div className="flex flex-col gap-1">
         <span className="flex items-center gap-1 font-label-sm text-label-sm text-primary/70 mb-1">
           <span className="material-symbols-outlined text-[13px]">auto_awesome</span>
-          Multimodal retrieval
+          Visual search
         </span>
-        <h2 className="font-display-lg text-display-lg text-on-surface">Recommendation Engine</h2>
+        <h2 className="font-serif text-display-lg text-on-surface">Find your look</h2>
         <p className="font-body-lg text-body-lg text-on-surface-variant/70">
-          Fuse visual and textual queries to find precise product matches.
+          Upload a photo, describe what you're after, or combine both.
         </p>
       </div>
 
@@ -82,7 +82,7 @@ export default function RecommendationEngine() {
             <div className="flex items-center justify-between mb-stack-xs">
               <label className="flex items-center gap-1.5 font-label-md text-label-md text-on-surface-variant/60" htmlFor="text-query">
                 <span className="material-symbols-outlined text-[16px]">text_fields</span>
-                Text Query
+                Describe it
               </label>
               {textQuery && (
                 <button
@@ -97,7 +97,7 @@ export default function RecommendationEngine() {
             <textarea
               className="w-full flex-1 bg-transparent border-none resize-none outline-none focus:ring-0 p-0 font-body-lg text-body-lg text-on-surface placeholder:text-on-surface-variant/35 leading-relaxed"
               id="text-query"
-              placeholder='Describe the product… e.g. "Modern minimalist wooden dining chair with a curved back"'
+              placeholder='e.g. Oversized cream linen blazer with gold buttons'
               value={textQuery}
               onChange={(e) => setTextQuery(e.target.value)}
             />
@@ -115,19 +115,20 @@ export default function RecommendationEngine() {
         </div>
 
         <div className="border-t border-outline-variant/40 px-5 py-3 flex items-center gap-4">
-          <span className="font-label-sm text-label-sm text-on-surface-variant/50 whitespace-nowrap shrink-0">Peso de búsqueda</span>
+          <span className="font-label-sm text-label-sm text-on-surface-variant/50 whitespace-nowrap shrink-0">Search weight</span>
           <div className="flex-1 flex justify-center">
             <div className="w-full max-w-md">
               <FusionSlider value={textWeight} onChange={setTextWeight} />
             </div>
           </div>
+          <div className="w-[140px] shrink-0" />
         </div>
 
         <div className="border-t border-outline-variant/40 px-4 py-3 flex items-center justify-between">
           <button
             onClick={handleSearch}
             disabled={disabled}
-            className="flex items-center gap-2 bg-primary text-on-primary font-label-md text-label-md px-6 py-2.5 rounded-xl hover:brightness-110 transition-all disabled:opacity-40 disabled:pointer-events-none active:scale-[0.98] shadow-sm"
+            className="flex items-center gap-2 bg-search-bg text-search-text font-label-md text-label-md px-6 py-2.5 rounded-xl hover:brightness-125 transition-all disabled:opacity-40 disabled:pointer-events-none active:scale-[0.98] shadow-sm"
           >
             {loading ? (
               <>
@@ -137,12 +138,12 @@ export default function RecommendationEngine() {
             ) : (
               <>
                 <span className="material-symbols-outlined text-[18px]">search</span>
-                Search
+                Search looks
               </>
             )}
           </button>
           {disabled && (
-            <span className="font-body-sm text-body-sm text-on-surface-variant/40">Se requiere al menos una imagen o descripción</span>
+            <span className="font-body-sm text-body-sm text-on-surface-variant/40">Need at least a photo or description</span>
           )}
         </div>
       </div>

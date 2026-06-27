@@ -9,6 +9,7 @@ const PER_PAGE = 5
 
 export default function VisualSearch() {
   const [imagePreview, setImagePreview] = useState<string | null>(null)
+  const [imageFile, setImageFile] = useState<File | null>(null)
   const [selectedProduct, setSelectedProduct] = useState<ProductCardData | null>(null)
   const [page, setPage] = useState(1)
   const [results, setResults] = useState<ProductCardData[]>([])
@@ -18,14 +19,22 @@ export default function VisualSearch() {
   const totalPages = Math.max(1, Math.ceil(results.length / PER_PAGE))
   const visible = useMemo(() => results.slice((page - 1) * PER_PAGE, page * PER_PAGE), [results, page])
 
-  const handleUpload = async (file: File) => {
+  const handleUpload = (file: File) => {
     setImagePreview(URL.createObjectURL(file))
+    setImageFile(file)
+    setResults([])
+    setError(null)
+    setPage(1)
+  }
+
+  const handleSearch = async () => {
+    if (!imageFile) return
     setResults([])
     setError(null)
     setPage(1)
     setLoading(true)
     try {
-      const data = await visualSearch(file)
+      const data = await visualSearch(imageFile)
       setResults(data)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Search failed')
@@ -35,20 +44,51 @@ export default function VisualSearch() {
   }
 
   const handleClear = () => {
+    if (imagePreview) URL.revokeObjectURL(imagePreview)
     setImagePreview(null)
+    setImageFile(null)
     setResults([])
     setError(null)
     setPage(1)
   }
 
+  const disabled = loading || !imageFile
+
   return (
     <div className="flex flex-col gap-stack-lg">
       <header className="flex flex-col gap-1">
-        <h1 className="font-display-lg text-display-lg text-on-surface">Visual Search</h1>
-        <p className="font-body-lg text-body-lg text-on-surface-variant/70">Search products by uploading an image</p>
+        <span className="flex items-center gap-1 font-label-sm text-label-sm text-primary/70 mb-1">
+          <span className="material-symbols-outlined text-[13px]">image_search</span>
+          Visual search
+        </span>
+        <h1 className="font-serif text-display-lg text-on-surface">Shop by photo</h1>
+        <p className="font-body-lg text-body-lg text-on-surface-variant/70">Upload any photo and we'll find similar styles for you</p>
       </header>
 
-      <UploadZone imagePreview={imagePreview} onUpload={handleUpload} onClear={handleClear} />
+      <UploadZone imagePreview={imagePreview} onUpload={handleUpload} onClear={handleClear} label="Drop a fashion photo here" subLabel="Or click to browse your files" />
+
+      <div className="flex items-center justify-between">
+        <button
+          onClick={handleSearch}
+          disabled={disabled}
+          className="flex items-center gap-2 bg-search-bg text-search-text font-label-md text-label-md px-6 py-2.5 rounded-xl hover:brightness-125 transition-all disabled:opacity-40 disabled:pointer-events-none active:scale-[0.98] shadow-sm"
+        >
+          {loading ? (
+            <>
+              <span className="material-symbols-outlined text-[18px] animate-spin">progress_activity</span>
+              Searching…
+            </>
+          ) : (
+            <>
+              <span className="material-symbols-outlined text-[18px]">search</span>
+              Search looks
+            </>
+          )}
+        </button>
+        {disabled && (
+          <span className="font-body-sm text-body-sm text-on-surface-variant/40">Need a photo to search</span>
+        )}
+      </div>
 
       {error && (
         <div className="bg-error-container/80 text-on-error-container rounded-xl px-4 py-3 font-body-md text-body-md border border-error/10">
