@@ -1,4 +1,5 @@
 import os
+import pickle
 import re
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Set, Tuple, Union, overload
@@ -22,7 +23,6 @@ class BaseFeatureExtractor(ABC):
     @abstractmethod
     def extract_features(self, data: Any) -> Any:
         pass
-
 
 class ImageFeatureExtractor(BaseFeatureExtractor):
     def __init__(self) -> None:
@@ -63,21 +63,26 @@ class ImageFeatureExtractor(BaseFeatureExtractor):
 
         return descriptors
 
+VOCAB_FILENAME = "vocab.pkl"
+
 class TextFeatureExtractor(BaseFeatureExtractor):
-    def __init__(self, stopwords_path: str = "") -> None:
+    def __init__(self, stopwords_path: str = "", dist_dir: str = "") -> None:
         self._stemmer = SnowballStemmer("english")
         self._stop_words: Set[str] = self._load_stopwords(stopwords_path)
+        self._dist_dir = dist_dir or os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Data"
+        )
 
     @property
     def format(self) -> str:
         return "text"
 
-    @overload
+    @overload #offline
     def extract_features(
         self, chunks: List[TextChunk], vocab: None = None
     ) -> Tuple[TextBatchOutput, Set[str]]: ...
 
-    @overload
+    @overload #online
     def extract_features(
         self, chunks: List[TextChunk], vocab: Set[str]
     ) -> TextBatchOutput: ...
@@ -96,8 +101,16 @@ class TextFeatureExtractor(BaseFeatureExtractor):
                 global_vocab.update(bow.keys())
 
         if vocab is None:
+            self._persist_vocab(global_vocab)
             return results, global_vocab
         return results
+
+    def _persist_vocab(self, vocab: Set[str]) -> None:
+        os.makedirs(self._dist_dir, exist_ok=True)
+        path = os.path.join(self._dist_dir, VOCAB_FILENAME)
+        with open(path, "wb") as f:
+            pickle.dump(vocab, f)
+        print(f"Vocabulario guardado ({len(vocab)} terminos) en {path}")
 
     def _load_stopwords(self, stopwords_path: str = "") -> Set[str]:
         if not stopwords_path:
