@@ -27,6 +27,16 @@ export default function RecommendationEngine() {
     setImageFile(file)
   }
 
+  const handleClear = () => {
+    if (imagePreview) URL.revokeObjectURL(imagePreview)
+    setImagePreview(null)
+    setImageFile(null)
+    setTextQuery('')
+    setResults([])
+    setError(null)
+    setPage(1)
+  }
+
   const handleSearch = async () => {
     if (!imageFile && !textQuery.trim()) return
     setResults([])
@@ -48,40 +58,64 @@ export default function RecommendationEngine() {
     }
   }
 
+  const disabled = loading || (!imageFile && !textQuery.trim())
+
   return (
     <>
-      <div className="flex flex-col gap-stack-xs">
+      <div className="flex flex-col gap-1">
         <h2 className="font-display-lg text-display-lg text-on-surface">Recommendation Engine</h2>
-        <p className="font-body-lg text-body-lg text-on-surface-variant">
+        <p className="font-body-lg text-body-lg text-on-surface-variant/70">
           Fuse visual and textual queries to find precise product matches.
         </p>
       </div>
 
-      <div className="flex items-center gap-4">
-        <span className="font-label-sm text-label-sm text-on-surface-variant/70 uppercase tracking-wider">Fusion Balance</span>
-        <FusionSlider value={textWeight} onChange={setTextWeight} />
-      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr] gap-stack-lg">
+        <UploadZone imagePreview={imagePreview} onUpload={handleUpload} onClear={handleClear} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-stack-lg">
-        <UploadZone imagePreview={imagePreview} onUpload={handleUpload} />
-        <div className="border border-outline-variant bg-surface-container-lowest rounded-lg p-stack-md flex flex-col h-full min-h-[240px]">
-          <label className="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider mb-stack-sm" htmlFor="text-query">
-            Text Query
-          </label>
+        <div className="bg-surface-container-lowest border border-outline-variant/60 rounded-xl p-stack-sm flex flex-col items-center justify-center self-stretch">
+          <FusionSlider value={textWeight} onChange={setTextWeight} />
+        </div>
+
+        <div className="border border-outline-variant/60 bg-surface-container-lowest rounded-xl p-stack-md flex flex-col h-full min-h-[240px] relative transition-shadow duration-200 focus-within:border-primary/50 focus-within:shadow-sm">
+          <div className="flex items-center justify-between mb-stack-xs">
+            <label className="flex items-center gap-1.5 font-label-md text-label-md text-on-surface-variant/60" htmlFor="text-query">
+              <span className="material-symbols-outlined text-[16px]">text_fields</span>
+              Text Query
+            </label>
+            {textQuery && (
+              <button
+                type="button"
+                onClick={() => setTextQuery('')}
+                className="text-on-surface-variant/30 hover:text-on-surface-variant/60 transition-colors"
+              >
+                <span className="material-symbols-outlined text-[16px]">close</span>
+              </button>
+            )}
+          </div>
           <textarea
-            className="w-full flex-1 bg-transparent border-none resize-none focus:ring-0 p-0 font-body-lg text-body-lg text-on-surface placeholder:text-on-surface-variant/50"
+            className="w-full flex-1 bg-transparent border-none resize-none focus:ring-0 p-0 font-body-lg text-body-lg text-on-surface placeholder:text-on-surface-variant/35 leading-relaxed"
             id="text-query"
-            placeholder="Describe the product you are looking for... e.g., 'Modern minimalist wooden dining chair with a curved back'"
+            placeholder='Describe the product… e.g. "Modern minimalist wooden dining chair with a curved back"'
             value={textQuery}
             onChange={(e) => setTextQuery(e.target.value)}
           />
+          <div className="flex items-center justify-between mt-stack-xs pt-stack-xs border-t border-outline-variant/30">
+            <span className="font-code text-[11px] text-on-surface-variant/35">
+              {textQuery.length > 0 ? `${textQuery.length} characters` : 'Type to describe'}
+            </span>
+            {textQuery && (
+              <span className="font-code text-[11px] text-on-surface-variant/35">
+                {textQuery.trim() ? textQuery.trim().split(/\s+/).length : 0} words
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
       <button
         onClick={handleSearch}
-        disabled={loading || (!imageFile && !textQuery.trim())}
-        className="self-start flex items-center gap-2 bg-primary text-on-primary font-label-md text-label-md px-6 py-2.5 rounded-lg hover:brightness-110 transition-all disabled:opacity-40 disabled:pointer-events-none"
+        disabled={disabled}
+        className="self-start flex items-center gap-2 bg-primary text-on-primary font-label-md text-label-md px-6 py-2.5 rounded-xl hover:brightness-110 transition-all disabled:opacity-40 disabled:pointer-events-none active:scale-[0.98] shadow-sm"
       >
         {loading ? (
           <>
@@ -97,15 +131,18 @@ export default function RecommendationEngine() {
       </button>
 
       {error && (
-        <div className="bg-error-container text-on-error-container rounded-lg px-4 py-3 font-body-md text-body-md">
+        <div className="bg-error-container/80 text-on-error-container rounded-xl px-4 py-3 font-body-md text-body-md border border-error/10">
           {error}
         </div>
       )}
 
       {results.length > 0 && (
-        <div>
-          <h3 className="font-headline-sm text-headline-sm text-on-surface mb-stack-md">Recommendations</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-stack-sm md:gap-stack-md">
+        <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
+          <div className="flex items-center justify-between mb-stack-md">
+            <h3 className="font-headline-sm text-headline-sm text-on-surface">Recommendations</h3>
+            <span className="font-label-md text-label-md text-on-surface-variant/60 bg-surface-container px-3 py-1 rounded-full">{results.length} results</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-stack-md">
             {visible.map((product) => (
               <ProductCard key={product.id} product={product} onClick={setSelectedProduct} />
             ))}

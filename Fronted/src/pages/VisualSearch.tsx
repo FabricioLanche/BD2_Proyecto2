@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 import UploadZone from '../components/UploadZone'
-import ProcessingStepper from '../components/ProcessingStepper'
 import ProductCard, { type ProductCardData } from '../components/ProductCard'
 import DetailModal from '../components/DetailModal'
 import Pagination from '../components/Pagination'
@@ -35,30 +34,36 @@ export default function VisualSearch() {
     }
   }
 
+  const handleClear = () => {
+    setImagePreview(null)
+    setResults([])
+    setError(null)
+    setPage(1)
+  }
+
   return (
-    <div className="flex flex-col lg:flex-row gap-gutter">
-      <section className="flex-1 flex flex-col gap-stack-lg">
-        <header className="flex items-center justify-between pb-stack-sm">
-          <h1 className="font-display-lg text-display-lg text-on-surface">Visual Query Input</h1>
-        </header>
+    <div className="flex flex-col gap-stack-lg">
+      <header className="flex flex-col gap-1">
+        <h1 className="font-display-lg text-display-lg text-on-surface">Visual Search</h1>
+        <p className="font-body-lg text-body-lg text-on-surface-variant/70">Search products by uploading an image</p>
+      </header>
 
-        <UploadZone imagePreview={imagePreview} onUpload={handleUpload} />
+      <UploadZone imagePreview={imagePreview} onUpload={handleUpload} onClear={handleClear} />
 
-        {loading && <ProcessingStepper running={loading} />}
+      {error && (
+        <div className="bg-error-container/80 text-on-error-container rounded-xl px-4 py-3 font-body-md text-body-md border border-error/10">
+          {error}
+        </div>
+      )}
 
-        {error && (
-          <div className="bg-error-container text-on-error-container rounded-lg px-4 py-3 font-body-md text-body-md">
-            {error}
-          </div>
-        )}
-
-        <div className={`flex flex-col gap-stack-md transition-opacity duration-500 ${results.length > 0 ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+      {results.length > 0 && (
+        <div className="flex flex-col gap-stack-md animate-in fade-in slide-in-from-bottom-2 duration-500">
           <div className="flex items-center justify-between">
-            <h3 className="font-headline-md text-headline-md text-on-surface">Retrieved Matches</h3>
-            <span className="font-label-md text-label-md text-on-surface-variant bg-surface-container px-3 py-1 rounded-full">Top {results.length} Results</span>
+            <h3 className="font-headline-sm text-headline-sm text-on-surface">Retrieved Matches</h3>
+            <span className="font-label-md text-label-md text-on-surface-variant/60 bg-surface-container px-3 py-1 rounded-full">{results.length} results</span>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-stack-sm">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-stack-md">
             {visible.map((product) => (
               <ProductCard key={product.id} product={product} onClick={setSelectedProduct} />
             ))}
@@ -66,7 +71,7 @@ export default function VisualSearch() {
 
           <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
         </div>
-      </section>
+      )}
 
       {selectedProduct && (
         <DetailModal product={selectedProduct} onClose={() => setSelectedProduct(null)} />

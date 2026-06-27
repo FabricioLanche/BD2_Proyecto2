@@ -23,7 +23,8 @@ stitch/
 # OS
 .DS_Store
 Thumbs.db
-*/Backend/Multimodal/Offline/pruebas_extractor/
+Backend/Multimodal/Offline/pruebas_extractor/
+**/pruebas_extractor/
 # IDE
 .vscode/
 .idea/
