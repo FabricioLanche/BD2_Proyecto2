@@ -1,7 +1,7 @@
 import os
 import re
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union, overload
 
 import cv2
 import numpy as np
@@ -72,19 +72,32 @@ class TextFeatureExtractor(BaseFeatureExtractor):
     def format(self) -> str:
         return "text"
 
+    @overload
     def extract_features(
-        self, chunks: List[TextChunk]
-    ) -> Tuple[TextBatchOutput, Set[str]]:
+        self, chunks: List[TextChunk], vocab: None = None
+    ) -> Tuple[TextBatchOutput, Set[str]]: ...
+
+    @overload
+    def extract_features(
+        self, chunks: List[TextChunk], vocab: Set[str]
+    ) -> TextBatchOutput: ...
+
+    def extract_features(
+        self, chunks: List[TextChunk], vocab: Optional[Set[str]] = None
+    ) -> Union[TextBatchOutput, Tuple[TextBatchOutput, Set[str]]]:
 
         results: TextBatchOutput = []
         global_vocab: Set[str] = set()
 
         for text_id, content in chunks:
-            bow = self.compute_bow(content)
+            bow = self.compute_bow(content, vocab)
             results.append((text_id, bow))
-            global_vocab.update(bow.keys())
+            if vocab is None:
+                global_vocab.update(bow.keys())
 
-        return results, global_vocab
+        if vocab is None:
+            return results, global_vocab
+        return results
 
     def _load_stopwords(self, stopwords_path: str = "") -> Set[str]:
         if not stopwords_path:
@@ -107,10 +120,10 @@ class TextFeatureExtractor(BaseFeatureExtractor):
         tokens = [self._stemmer.stem(t) for t in tokens]
         return tokens
 
-    def compute_bow(self, text: str) -> Dict[str, int]:
-        # diccionario {lexema: frecuencia} para un texto
-
+    def compute_bow(self, text: str, vocab: Optional[Set[str]] = None) -> Dict[str, int]:
         tokens = self.preprocess(text)
+        if vocab is not None:
+            tokens = [t for t in tokens if t in vocab]
         bow: Dict[str, int] = {}
         for token in tokens:
             bow[token] = bow.get(token, 0) + 1
