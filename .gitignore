@@ -1,1 +1,39 @@
-__pycache__
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+*.egg
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+
+# Build output
+dist/
+stitch/
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+Backend/Multimodal/Offline/pruebas_extractor/
+**/pruebas_extractor/
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Project specific
+base_2_project
