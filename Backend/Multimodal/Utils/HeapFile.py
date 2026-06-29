@@ -122,8 +122,7 @@ class HeapFile:
         self.write_page(page)
         return page_id
 
-    def append_to_posting_list(self, start_page_id: tuple[int, int], posting: PostingEntry) -> None:
-        _, page_number = start_page_id
+    def append_to_posting_list(self, start_page_id: tuple[int, int], posting: PostingEntry) -> tuple[int, int]:
         while True:
             page = self.read_page(start_page_id)
             posting_page = PostingPage.from_page(page)
@@ -131,7 +130,7 @@ class HeapFile:
             if len(posting_page.POSTING_LIST) < self.MAX_ENTRIES:
                 posting_page.POSTING_LIST.append(posting)
                 self.write_page(posting_page.to_page(self.FILE_HEADER.PAGE_SIZE))
-                return
+                return start_page_id
 
             if posting_page.NEXT_PAGE == -1:
                 new_page_id = self.allocate_page()
@@ -140,7 +139,7 @@ class HeapFile:
 
                 posting_page.NEXT_PAGE = new_page_id[1]
                 self.write_page(posting_page.to_page(self.FILE_HEADER.PAGE_SIZE))
-                return
+                return new_page_id
 
             start_page_id = (self.FILE_ID, posting_page.NEXT_PAGE)
 

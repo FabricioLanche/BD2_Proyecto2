@@ -261,18 +261,24 @@ class BPlusTree:
         else:
             self._save_node(parent)
 
-    def insert_posting(self, codeword_id: int, posting: tuple[int, int]):
+    def insert_posting(
+        self,
+        codeword_id: int,
+        posting: tuple[int, int],
+        tail: tuple[int, int] | None = None,
+    ) -> tuple[int, int]:
+        if tail is not None:
+            return self.HEAP_FILE.append_to_posting_list(tail, PostingEntry(posting[0], posting[1]))
         leaf = self._find_leaf(codeword_id)
         for entry in leaf.ENTRIES:
             if entry.KEY == codeword_id:
-                self.HEAP_FILE.append_to_posting_list(
-                    (self.HEAP_FILE.FILE_ID, entry.PTR), PostingEntry(posting[0], posting[1])
-                )
-                return
+                start = (self.HEAP_FILE.FILE_ID, entry.PTR)
+                return self.HEAP_FILE.append_to_posting_list(start, PostingEntry(posting[0], posting[1]))
         heap_page_id = self.HEAP_FILE.create_posting_page(
             PostingEntry(posting[0], posting[1])
         )
         self._insert_into_leaf(leaf, NodeEntry(codeword_id, heap_page_id[1]))
+        return heap_page_id
 
     def scan(self):
         leaf_id = self.BPLUS_TREE_FILE.FILE_HEADER.ROOT_PAGE

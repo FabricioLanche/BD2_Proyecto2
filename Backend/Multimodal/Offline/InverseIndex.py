@@ -41,8 +41,9 @@ class InverseIndex:
                           btree_file_id=0, heap_file_id=1,
                           buffer_manager=bm)
         for codeword_id, doc_freqs in buffer.items():
+            tail: tuple[int, int] | None = None
             for doc_id, freq in doc_freqs.items():
-                btree.insert_posting(codeword_id, (doc_id, freq))
+                tail = btree.insert_posting(codeword_id, (doc_id, freq), tail)
         return (block_btree, block_heap)
 
     @staticmethod
@@ -74,6 +75,8 @@ class InverseIndex:
                                 heap_file_id=heap_file_id,
                                 buffer_manager=buffer_manager)
 
+        tails: dict[int, tuple[int, int]] = {}
+
         while any(e is not None for e in current):
             min_key = min(e[0] for e in current if e is not None)
             merged: dict[int, int] = {}
@@ -87,8 +90,10 @@ class InverseIndex:
                     except StopIteration:
                         current[i] = None
 
+            tail = tails.get(min_key)
             for doc_id, tf in merged.items():
-                final_btree.insert_posting(min_key, (doc_id, tf))
+                tail = final_btree.insert_posting(min_key, (doc_id, tf), tail)
+            tails[min_key] = tail
 
         return final_btree
 
