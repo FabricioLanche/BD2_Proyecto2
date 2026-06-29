@@ -5,7 +5,7 @@ import os
 
 @dataclass
 class Page:
-    PAGE_ID: int
+    PAGE_ID: tuple[int, int] #(file_id, page_number)
     DATA: bytearray
 
 @dataclass
@@ -26,7 +26,7 @@ NODE_ENTRY_FORMAT = "<2i"
 NODE_ENTRY_SIZE = struct.calcsize(NODE_ENTRY_FORMAT)
 
 class NodePage:
-    def __init__(self, page_id: int, entries: list[NodeEntry], page_header: PageHeader):
+    def __init__(self, page_id: tuple[int, int], entries: list[NodeEntry], page_header: PageHeader):
         self.PAGE_ID = page_id
         self.PAGE_HEADER = page_header
         self.ENTRIES = entries
@@ -85,7 +85,8 @@ class BPlusTreeFile:
     # FILE_PATH = os.path.join(FILE_DIR, "BPlusTree.bin")
     # MAX_ENTRIES = (PAGE_SIZE - PAGE_HEADER_SIZE) // NODE_ENTRY_SIZE
 
-    def __init__(self, filename="BPlusTree.bin"):
+    def __init__(self, filename, file_id: int):
+        self.FILE_ID = file_id
         self.FILE_PATH = filename
         try:
             self.read_file_header()
@@ -114,8 +115,9 @@ class BPlusTreeFile:
                 self.FILE_HEADER.N_PAGES
             ))
 
-    def read_page(self, page_id: int) -> Page:
-        offset = FILE_HEADER_SIZE + page_id * self.FILE_HEADER.PAGE_SIZE
+    def read_page(self, page_id: tuple[int, int]) -> Page:
+        _, page_number = page_id
+        offset = FILE_HEADER_SIZE + page_number * self.FILE_HEADER.PAGE_SIZE
         with open(self.FILE_PATH, "rb") as file:
             file.seek(offset)
             data = file.read(self.FILE_HEADER.PAGE_SIZE)
@@ -126,29 +128,33 @@ class BPlusTreeFile:
     def write_page(self, page: Page):
         if len(page.DATA) != self.FILE_HEADER.PAGE_SIZE:
             raise ValueError("Tamaño de página incorrecto")
-        offset = FILE_HEADER_SIZE + page.PAGE_ID * self.FILE_HEADER.PAGE_SIZE
+        _, page_number = page.PAGE_ID
+        offset = FILE_HEADER_SIZE + page_number * self.FILE_HEADER.PAGE_SIZE
         with open(self.FILE_PATH, "rb+") as file:
             file.seek(offset)
             file.write(page.DATA)
-        self.FILE_HEADER.N_PAGES = max(self.FILE_HEADER.N_PAGES, page.PAGE_ID + 1)
+        self.FILE_HEADER.N_PAGES = max(self.FILE_HEADER.N_PAGES, page_number + 1)
 
-    def allocate_page(self) -> int:
-        page_id = self.FILE_HEADER.N_PAGES
+    def allocate_page(self) -> tuple[int, int]:
+        page_number = self.FILE_HEADER.N_PAGES
         self.FILE_HEADER.N_PAGES += 1
         self.write_file_header()
-        return page_id
+        return (self.FILE_ID, page_number)
 
 class BPlusTree:
-    def __init__(self, btree_filename="BPlusTree.bin", heap_filename="HeapFile.bin"):
-        self.HEAP_FILE = HeapFile(heap_filename)
-        self.BPLUS_TREE_FILE = BPlusTreeFile(btree_filename)
+    def __init__(self, btree_filename, heap_filename,
+                 btree_file_id: int = 0, heap_file_id: int = 1):
+        self.HEAP_FILE = HeapFile(heap_filename, file_id=heap_file_id)
+        self.BPLUS_TREE_FILE = BPlusTreeFile(btree_filename, file_id=btree_file_id)
         if self.BPLUS_TREE_FILE.FILE_HEADER.ROOT_PAGE == -1:
             root = self._create_node(is_leaf=True)
             self._save_node(root)
-            self.BPLUS_TREE_FILE.FILE_HEADER.ROOT_PAGE = root.PAGE_ID
+            self.BPLUS_TREE_FILE.FILE_HEADER.ROOT_PAGE = root.PAGE_ID[1]
             self.BPLUS_TREE_FILE.write_file_header()
 
-    def _load_node(self, page_id: int) -> NodePage:
+    def _load_node(self, page_id: int | tuple[int, int]) -> NodePage:
+        if isinstance(page_id, int):
+            page_id = (self.BPLUS_TREE_FILE.FILE_ID, page_id)
         page = self.BPLUS_TREE_FILE.read_page(page_id)
         return NodePage.from_page(page)
 
@@ -162,19 +168,19 @@ class BPlusTree:
         return NodePage(page_id=page_id, entries=[], page_header=header)
 
     def _find_leaf(self, key: int) -> NodePage:
-        page_id = self.BPLUS_TREE_FILE.FILE_HEADER.ROOT_PAGE
-        node = self._load_node(page_id)
+        leaf_id = self.BPLUS_TREE_FILE.FILE_HEADER.ROOT_PAGE
+        node = self._load_node(leaf_id)
         while not node.PAGE_HEADER.IS_LEAF:
             if key < node.ENTRIES[0].KEY:
-                page_id = node.FIRST_PTR
+                leaf_id = node.FIRST_PTR
             elif key >= node.ENTRIES[-1].KEY:
-                page_id = node.ENTRIES[-1].PTR
+                leaf_id = node.ENTRIES[-1].PTR
             else:
                 for i in range(len(node.ENTRIES) - 1):
                     if node.ENTRIES[i].KEY <= key < node.ENTRIES[i + 1].KEY:
-                        page_id = node.ENTRIES[i].PTR
+                        leaf_id = node.ENTRIES[i].PTR
                         break
-            node = self._load_node(page_id)
+            node = self._load_node(leaf_id)
         return node
 
     def _insert_into_leaf(self, leaf: NodePage, entry: NodeEntry):
@@ -198,7 +204,7 @@ class BPlusTree:
         leaf.PAGE_HEADER.N_ENTRIES = len(leaf.ENTRIES)
         new_leaf.PAGE_HEADER.N_ENTRIES = len(new_leaf.ENTRIES)
         new_leaf.PAGE_HEADER.NEXT_LEAF = leaf.PAGE_HEADER.NEXT_LEAF
-        leaf.PAGE_HEADER.NEXT_LEAF = new_leaf.PAGE_ID
+        leaf.PAGE_HEADER.NEXT_LEAF = new_leaf.PAGE_ID[1]
         self._save_node(leaf)
         self._save_node(new_leaf)
         split_key = new_leaf.ENTRIES[0].KEY
@@ -214,11 +220,11 @@ class BPlusTree:
         node.PAGE_HEADER.N_ENTRIES = len(node.ENTRIES)
         new_node.PAGE_HEADER.N_ENTRIES = len(new_node.ENTRIES)
         child = self._load_node(new_node.FIRST_PTR)
-        child.PAGE_HEADER.PARENT_ID = new_node.PAGE_ID
+        child.PAGE_HEADER.PARENT_ID = new_node.PAGE_ID[1]
         self._save_node(child)
         for entry in new_node.ENTRIES:
             child = self._load_node(entry.PTR)
-            child.PAGE_HEADER.PARENT_ID = new_node.PAGE_ID
+            child.PAGE_HEADER.PARENT_ID = new_node.PAGE_ID[1]
             self._save_node(child)
         self._save_node(node)
         self._save_node(new_node)
@@ -227,26 +233,26 @@ class BPlusTree:
     def _insert_into_parent(self, left: NodePage, split_key: int, right: NodePage):
         if left.PAGE_HEADER.PARENT_ID == -1:
             new_root = self._create_node(is_leaf=False)
-            new_root.FIRST_PTR = left.PAGE_ID
-            new_root.ENTRIES = [NodeEntry(split_key, right.PAGE_ID)]
+            new_root.FIRST_PTR = left.PAGE_ID[1]
+            new_root.ENTRIES = [NodeEntry(split_key, right.PAGE_ID[1])]
             new_root.PAGE_HEADER.N_ENTRIES = 1
-            left.PAGE_HEADER.PARENT_ID = new_root.PAGE_ID
-            right.PAGE_HEADER.PARENT_ID = new_root.PAGE_ID
+            left.PAGE_HEADER.PARENT_ID = new_root.PAGE_ID[1]
+            right.PAGE_HEADER.PARENT_ID = new_root.PAGE_ID[1]
             self._save_node(left)
             self._save_node(right)
             self._save_node(new_root)
-            self.BPLUS_TREE_FILE.FILE_HEADER.ROOT_PAGE = new_root.PAGE_ID
+            self.BPLUS_TREE_FILE.FILE_HEADER.ROOT_PAGE = new_root.PAGE_ID[1]
             self.BPLUS_TREE_FILE.write_file_header()
             return
         parent = self._load_node(left.PAGE_HEADER.PARENT_ID)
         for i, entry in enumerate(parent.ENTRIES):
             if split_key < entry.KEY:
-                parent.ENTRIES.insert(i, NodeEntry(split_key, right.PAGE_ID))
+                parent.ENTRIES.insert(i, NodeEntry(split_key, right.PAGE_ID[1]))
                 break
         else:
-            parent.ENTRIES.append(NodeEntry(split_key, right.PAGE_ID))
+            parent.ENTRIES.append(NodeEntry(split_key, right.PAGE_ID[1]))
         parent.PAGE_HEADER.N_ENTRIES = len(parent.ENTRIES)
-        right.PAGE_HEADER.PARENT_ID = parent.PAGE_ID
+        right.PAGE_HEADER.PARENT_ID = parent.PAGE_ID[1]
         self._save_node(right)
         if parent.PAGE_HEADER.N_ENTRIES > self.BPLUS_TREE_FILE.MAX_ENTRIES:
             self._split_internal(parent)
@@ -258,37 +264,48 @@ class BPlusTree:
         for entry in leaf.ENTRIES:
             if entry.KEY == codeword_id:
                 self.HEAP_FILE.append_to_posting_list(
-                    entry.PTR, PostingEntry(posting[0], posting[1])
+                    (self.HEAP_FILE.FILE_ID, entry.PTR), PostingEntry(posting[0], posting[1])
                 )
                 return
         heap_page_id = self.HEAP_FILE.create_posting_page(
             PostingEntry(posting[0], posting[1])
         )
-        self._insert_into_leaf(leaf, NodeEntry(codeword_id, heap_page_id))
+        self._insert_into_leaf(leaf, NodeEntry(codeword_id, heap_page_id[1]))
 
     def scan(self):
-        page_id = self.BPLUS_TREE_FILE.FILE_HEADER.ROOT_PAGE
-        node = self._load_node(page_id)
+        leaf_id = self.BPLUS_TREE_FILE.FILE_HEADER.ROOT_PAGE
+        node = self._load_node(leaf_id)
         while not node.PAGE_HEADER.IS_LEAF:
-            page_id = node.FIRST_PTR
-            node = self._load_node(page_id)
+            leaf_id = node.FIRST_PTR
+            node = self._load_node(leaf_id)
         while True:
             for entry in node.ENTRIES:
-                posting_list = self.HEAP_FILE.read_posting_list(entry.PTR)
+                posting_list = self.HEAP_FILE.read_posting_list(
+                    (self.HEAP_FILE.FILE_ID, entry.PTR)
+                )
                 yield (entry.KEY, posting_list)
             if node.PAGE_HEADER.NEXT_LEAF == -1:
                 break
             node = self._load_node(node.PAGE_HEADER.NEXT_LEAF)
+
+    def get_posting_list(self, key: int) -> list[PostingEntry] | None:
+        leaf = self._find_leaf(key)
+        for entry in leaf.ENTRIES:
+            if entry.KEY == key:
+                return self.HEAP_FILE.read_posting_list(
+                    (self.HEAP_FILE.FILE_ID, entry.PTR)
+                )
+        return None
 
     def upsert_posting(self, codeword_id: int, posting: tuple[int, int]) -> None:
         leaf = self._find_leaf(codeword_id)
         for entry in leaf.ENTRIES:
             if entry.KEY == codeword_id:
                 self.HEAP_FILE.upsert_posting(
-                    entry.PTR, PostingEntry(posting[0], posting[1])
+                    (self.HEAP_FILE.FILE_ID, entry.PTR), PostingEntry(posting[0], posting[1])
                 )
                 return
         heap_page_id = self.HEAP_FILE.create_posting_page(
             PostingEntry(posting[0], posting[1])
         )
-        self._insert_into_leaf(leaf, NodeEntry(codeword_id, heap_page_id))
+        self._insert_into_leaf(leaf, NodeEntry(codeword_id, heap_page_id[1]))
