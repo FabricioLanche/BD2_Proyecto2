@@ -22,12 +22,14 @@ class PersistenceManager:
     def _get_cursor(self):
         return self.connection.cursor()
     
-    def create_tables(self):
+    def create_tables(self, histogram_dim: int = 128):
+        # histogram_dim = k del codebook visual; el orquestador lo pasa
+        # tras construir el codebook para que la columna calce con el histograma.
 
         with self._get_cursor() as cursor:
             try:
 
-                cursor.execute("""
+                cursor.execute(f"""
                     CREATE EXTENSION IF NOT EXISTS vector;
 
                     DROP TABLE IF EXISTS descriptors;
@@ -39,7 +41,7 @@ class PersistenceManager:
                         texto_vector TSVECTOR GENERATED ALWAYS AS (
                             to_tsvector('english', coalesce(texto, ''))
                         ) STORED,
-                        image_histogram VECTOR(128)
+                        image_histogram VECTOR({int(histogram_dim)})
                     );
                 """)
 

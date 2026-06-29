@@ -1,1 +1,7 @@
 numpy
+pandas
+opencv-python
+scikit-learn
+nltk
+psycopg2-binary
+pgvector
