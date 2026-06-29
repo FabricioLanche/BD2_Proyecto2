@@ -2,6 +2,8 @@ from dataclasses import dataclass
 import struct
 import os
 
+from .BufferManager import BufferManager
+
 @dataclass
 class Page:
     PAGE_ID: tuple[int, int] #(file_id, page_number)
@@ -61,9 +63,10 @@ class HeapFile:
     # FILE_PATH = os.path.join(FILE_DIR, "HeapFile.bin")
     # MAX_ENTRIES = (PAGE_SIZE - PAGE_HEADER_SIZE) // POSTING_ENTRY_SIZE
 
-    def __init__(self, filename, file_id: int):
+    def __init__(self, filename, file_id: int, buffer_manager: BufferManager):
         self.FILE_ID = file_id
-        self.FILE_PATH = filename 
+        self.FILE_PATH = filename
+        self.BUFFER_MANAGER = buffer_manager
         try:
             self.read_file_header()
         except (FileNotFoundError, struct.error):
@@ -73,6 +76,11 @@ class HeapFile:
             self.write_file_header()
         finally:
             self.MAX_ENTRIES = (self.FILE_HEADER.PAGE_SIZE - PAGE_HEADER_SIZE) // POSTING_ENTRY_SIZE
+            self.BUFFER_MANAGER.register_file(
+                file_id, filename,
+                self.FILE_HEADER.PAGE_SIZE,
+                FILE_HEADER_SIZE,
+            )
 
     def read_file_header(self) -> None: 
         with open(self.FILE_PATH, "rb+") as file:
@@ -91,23 +99,14 @@ class HeapFile:
             ))
 
     def read_page(self, page_id: tuple[int, int]) -> Page:
-        _, page_number = page_id
-        offset = FILE_HEADER_SIZE + page_number * self.FILE_HEADER.PAGE_SIZE
-        with open(self.FILE_PATH, "rb") as file:
-            file.seek(offset)
-            data = file.read(self.FILE_HEADER.PAGE_SIZE)
-            if len(data) != self.FILE_HEADER.PAGE_SIZE:
-                raise ValueError("Página incompleta o inexistente")
-        return Page(page_id, bytearray(data))
+        data = self.BUFFER_MANAGER.read_page(page_id)
+        return Page(page_id, data)
     
     def write_page(self, page: Page):
         if len(page.DATA) != self.FILE_HEADER.PAGE_SIZE:
             raise ValueError("Tamaño de página incorrecto")
+        self.BUFFER_MANAGER.write_page(page.PAGE_ID, page.DATA)
         _, page_number = page.PAGE_ID
-        offset = FILE_HEADER_SIZE + page_number * self.FILE_HEADER.PAGE_SIZE
-        with open(self.FILE_PATH, "rb+") as file:
-            file.seek(offset)
-            file.write(page.DATA)
         self.FILE_HEADER.N_PAGES = max(self.FILE_HEADER.N_PAGES, page_number + 1)
 
     def allocate_page(self) -> tuple[int, int]:

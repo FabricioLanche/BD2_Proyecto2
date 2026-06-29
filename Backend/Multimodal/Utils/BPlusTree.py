@@ -1,3 +1,4 @@
+from .BufferManager import BufferManager
 from .HeapFile import HeapFile, PostingEntry
 from dataclasses import dataclass
 import struct
@@ -85,9 +86,10 @@ class BPlusTreeFile:
     # FILE_PATH = os.path.join(FILE_DIR, "BPlusTree.bin")
     # MAX_ENTRIES = (PAGE_SIZE - PAGE_HEADER_SIZE) // NODE_ENTRY_SIZE
 
-    def __init__(self, filename, file_id: int):
+    def __init__(self, filename, file_id: int, buffer_manager: BufferManager):
         self.FILE_ID = file_id
         self.FILE_PATH = filename
+        self.BUFFER_MANAGER = buffer_manager
         try:
             self.read_file_header()
         except (FileNotFoundError, struct.error):
@@ -97,6 +99,11 @@ class BPlusTreeFile:
             self.write_file_header()
         finally:
             self.MAX_ENTRIES = (self.FILE_HEADER.PAGE_SIZE - PAGE_HEADER_SIZE) // NODE_ENTRY_SIZE
+            self.BUFFER_MANAGER.register_file(
+                file_id, filename,
+                self.FILE_HEADER.PAGE_SIZE,
+                FILE_HEADER_SIZE,
+            )
 
     def read_file_header(self) -> None:
         with open(self.FILE_PATH, "rb+") as file:
@@ -116,23 +123,14 @@ class BPlusTreeFile:
             ))
 
     def read_page(self, page_id: tuple[int, int]) -> Page:
-        _, page_number = page_id
-        offset = FILE_HEADER_SIZE + page_number * self.FILE_HEADER.PAGE_SIZE
-        with open(self.FILE_PATH, "rb") as file:
-            file.seek(offset)
-            data = file.read(self.FILE_HEADER.PAGE_SIZE)
-            if len(data) != self.FILE_HEADER.PAGE_SIZE:
-                raise ValueError("Página incompleta o inexistente")
-        return Page(page_id, bytearray(data))
+        data = self.BUFFER_MANAGER.read_page(page_id)
+        return Page(page_id, data)
 
     def write_page(self, page: Page):
         if len(page.DATA) != self.FILE_HEADER.PAGE_SIZE:
             raise ValueError("Tamaño de página incorrecto")
+        self.BUFFER_MANAGER.write_page(page.PAGE_ID, page.DATA)
         _, page_number = page.PAGE_ID
-        offset = FILE_HEADER_SIZE + page_number * self.FILE_HEADER.PAGE_SIZE
-        with open(self.FILE_PATH, "rb+") as file:
-            file.seek(offset)
-            file.write(page.DATA)
         self.FILE_HEADER.N_PAGES = max(self.FILE_HEADER.N_PAGES, page_number + 1)
 
     def allocate_page(self) -> tuple[int, int]:
@@ -143,9 +141,13 @@ class BPlusTreeFile:
 
 class BPlusTree:
     def __init__(self, btree_filename, heap_filename,
-                 btree_file_id: int = 0, heap_file_id: int = 1):
-        self.HEAP_FILE = HeapFile(heap_filename, file_id=heap_file_id)
-        self.BPLUS_TREE_FILE = BPlusTreeFile(btree_filename, file_id=btree_file_id)
+                 btree_file_id: int, heap_file_id: int,
+                 buffer_manager: BufferManager):
+        self.BUFFER_MANAGER = buffer_manager
+        self.HEAP_FILE = HeapFile(heap_filename, file_id=heap_file_id,
+                                  buffer_manager=buffer_manager)
+        self.BPLUS_TREE_FILE = BPlusTreeFile(btree_filename, file_id=btree_file_id,
+                                             buffer_manager=buffer_manager)
         if self.BPLUS_TREE_FILE.FILE_HEADER.ROOT_PAGE == -1:
             root = self._create_node(is_leaf=True)
             self._save_node(root)
