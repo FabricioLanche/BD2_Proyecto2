@@ -17,6 +17,12 @@ class PersistenceManager:
             password=password
         )
 
+        # la extension debe existir ANTES de register_vector (si no, falla con
+        # 'vector type not found in the database')
+        with self.connection.cursor() as cursor:
+            cursor.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+        self.connection.commit()
+
         register_vector(self.connection)
 
     def _get_cursor(self):
@@ -93,9 +99,9 @@ class PersistenceManager:
                     cursor,
                     """
                     UPDATE descriptors AS d
-                    SET image_histogram = data.image_histogram
+                    SET image_histogram = data.image_histogram::vector
                     FROM (VALUES %s) AS data(doc_id, image_histogram)
-                    WHERE d.doc_id = data.doc_id;
+                    WHERE d.doc_id = data.doc_id::integer;
                     """,
                     rows,
                     page_size=page_size

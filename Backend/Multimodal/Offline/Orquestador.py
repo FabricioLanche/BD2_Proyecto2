@@ -7,8 +7,8 @@ siguiente y llama a la persistencia.
 
 artefactos que deja en Backend/Multimodal/Data/ (los reusa el orquestador online):
     - vocab.pkl, text_codebook.pkl, visual_codebook.pkl
-    - Index/text.btree + Index/text.heap   (indice invertido de texto)
-    - Index/image.btree + Index/image.heap (indice invertido de imagen)
+    - text_index.btree/heap + image_index.btree/heap (indices invertidos)
+    - text_word_idf.pkl, text_doc_norm.pkl, image_word_idf.pkl, image_doc_norm.pkl (TF-IDF)
     - Tabla `descriptors` poblada en PostgreSQL.
 """
 
@@ -27,7 +27,7 @@ import pandas as pd
 from .CodeBook import TextCodebookBuilder, VisualCodebookBuilder
 from .CodeBook_pt2 import generate_image_histograms, generate_text_histograms
 from .FeatureExtractor import ImageFeatureExtractor, TextFeatureExtractor
-from .InverseIndex import SPIMIndexConstruction
+from .InverseIndex import InverseIndex
 from .Persistence import PersistenceManager
 from .SplitChunks import MultimodalSplitter
 
@@ -36,7 +36,6 @@ logger = logging.getLogger("Orquestador")
 
 MODULE_DIR = Path(__file__).resolve().parent
 DATA_DIR = MODULE_DIR.parent / "Data"
-INDEX_DIR = DATA_DIR / "Index"
 
 #columnas textuales de styles.csv que se concatenan para formar `texto`.
 TEXT_COLUMNS = [
@@ -52,18 +51,10 @@ def load_dataset(dataset_dir: Path, limit: int | None = None
     dataset_dir = Path(dataset_dir)
     images_csv = dataset_dir / "images.csv"
     styles_csv = dataset_dir / "styles.csv"
-    for f in (images_csv, styles_csv):
-        if not f.exists():
-            raise FileNotFoundError(f"No se encontro {f}")
+    if not styles_csv.exists():
+        raise FileNotFoundError(f"No se encontro {styles_csv}")
 
-    images = pd.read_csv(images_csv)
     styles = pd.read_csv(styles_csv, on_bad_lines="skip")
-
-    #doc id= num filename
-    images["doc_id"] = (
-        images["filename"].astype(str).str.replace(".jpg", "", regex=False).astype(int)
-    )
-    images = images.rename(columns={"link": "url"})
 
     #texto = concatenacion de las columnas textuales disponibles en styles.csv
     present = [c for c in TEXT_COLUMNS if c in styles.columns]
@@ -71,11 +62,25 @@ def load_dataset(dataset_dir: Path, limit: int | None = None
     styles["texto"] = (
         styles[present].agg(" ".join, axis=1).str.replace(r"\s+", " ", regex=True).str.strip()
     )
+    styles = styles.rename(columns={"id": "doc_id"})
 
-    merged = images.merge(
-        styles[["id", "texto"]], left_on="doc_id", right_on="id", how="inner"
-    )
-    df = merged[["doc_id", "url", "texto"]].drop_duplicates(subset="doc_id").reset_index(drop=True)
+    if images_csv.exists():
+        #version grande: images.csv trae filename (-> doc_id) y link (-> url)
+        images = pd.read_csv(images_csv)
+        images["doc_id"] = (
+            images["filename"].astype(str).str.replace(".jpg", "", regex=False).astype(int)
+        )
+        images = images.rename(columns={"link": "url"})
+        df = images.merge(styles[["doc_id", "texto"]], on="doc_id", how="inner")
+        df = df[["doc_id", "url", "texto"]]
+    else:
+        #version small: no hay images.csv -> doc_id sale de styles.csv y url queda vacia
+        logger.info("Sin images.csv; usando ids de styles.csv (url vacia)")
+        df = styles[["doc_id", "texto"]].copy()
+        df["url"] = ""
+        df = df[["doc_id", "url", "texto"]]
+
+    df = df.drop_duplicates(subset="doc_id").reset_index(drop=True)
 
     if limit:
         df = df.head(limit).reset_index(drop=True)
@@ -152,7 +157,6 @@ def to_dense_bows(doc_bows: List[Tuple[int, Dict[str, int]]], vocabulary: List[s
 
 def run_offline(dataset_dir: str, db_config: dict, limit: int | None = None,
                 text_k: int = 100) -> None:
-    INDEX_DIR.mkdir(parents=True, exist_ok=True)
     splitter = MultimodalSplitter()
 
     #1. dataset + registro de ids
@@ -173,6 +177,8 @@ def run_offline(dataset_dir: str, db_config: dict, limit: int | None = None,
 
     #3. postgreSQL: tabla (con dimension = k) + documentos base
     pm = PersistenceManager(**db_config)
+    inverse_index = InverseIndex()
+    n_docs = len(df)
     try:
         pm.create_tables(histogram_dim=k)
         pm.insert_document(df[["doc_id", "url", "texto"]])
@@ -180,9 +186,7 @@ def run_offline(dataset_dir: str, db_config: dict, limit: int | None = None,
         #4. imagen: histogramas + indice invertido
         image_histograms, image_spimi = generate_image_histograms(image_features, visual_codebook)
         pm.update_histograms(image_histograms)
-        SPIMIndexConstruction(
-            image_spimi, str(INDEX_DIR / "image.btree"), str(INDEX_DIR / "image.heap")
-        )
+        inverse_index.build_image_index(image_spimi, n_documents=n_docs)
         logger.info("Indice invertido de imagen construido")
 
         #5. texto: features -> codebook -> histogramas -> indice invertido
@@ -192,11 +196,10 @@ def run_offline(dataset_dir: str, db_config: dict, limit: int | None = None,
         _, text_spimi = generate_text_histograms(
             dense_features, text_codebook, np.array(vocabulary)
         )
-        SPIMIndexConstruction(
-            text_spimi, str(INDEX_DIR / "text.btree"), str(INDEX_DIR / "text.heap")
-        )
+        inverse_index.build_text_index(text_spimi, n_documents=n_docs)
         logger.info("Indice invertido de texto construido")
     finally:
+        inverse_index.buffer_manager.close()
         pm.close()
 
     logger.info("Pipeline offline completado.")
