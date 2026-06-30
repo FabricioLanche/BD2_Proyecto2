@@ -61,7 +61,8 @@ def generate_text_histograms(
         histogram = bow[codebook_idx]
         histograms.append((doc_id, histogram))
 
-        for codeword_id in codebook_idx:
-            spimi_stream.append((doc_id, codeword_id))
+        for codeword_id in range(len(codebook)):
+            if histogram[codeword_id] > 0:
+                spimi_stream.append((doc_id, codeword_id))
 
     return histograms, spimi_stream

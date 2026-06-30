@@ -2,9 +2,11 @@ from dataclasses import dataclass
 import struct
 import os
 
+from .BufferManager import BufferManager
+
 @dataclass
 class Page:
-    PAGE_ID: int
+    PAGE_ID: tuple[int, int] #(file_id, page_number)
     DATA: bytearray
 
 @dataclass
@@ -22,7 +24,7 @@ POSTING_ENTRY_FORMAT = "<2i"
 POSTING_ENTRY_SIZE = struct.calcsize(POSTING_ENTRY_FORMAT)
 
 class PostingPage:
-    def __init__(self, page_id: int, posting_list: list[PostingEntry], next_page: int = -1):
+    def __init__(self, page_id: tuple[int, int], posting_list: list[PostingEntry], next_page: int = -1):
         self.PAGE_ID = page_id
         self.POSTING_LIST = posting_list
         self.NEXT_PAGE = next_page
@@ -61,8 +63,10 @@ class HeapFile:
     # FILE_PATH = os.path.join(FILE_DIR, "HeapFile.bin")
     # MAX_ENTRIES = (PAGE_SIZE - PAGE_HEADER_SIZE) // POSTING_ENTRY_SIZE
 
-    def __init__(self, filename="HeapFile.bin"):
-        self.FILE_PATH = filename 
+    def __init__(self, filename, file_id: int, buffer_manager: BufferManager):
+        self.FILE_ID = file_id
+        self.FILE_PATH = filename
+        self.BUFFER_MANAGER = buffer_manager
         try:
             self.read_file_header()
         except (FileNotFoundError, struct.error):
@@ -72,6 +76,11 @@ class HeapFile:
             self.write_file_header()
         finally:
             self.MAX_ENTRIES = (self.FILE_HEADER.PAGE_SIZE - PAGE_HEADER_SIZE) // POSTING_ENTRY_SIZE
+            self.BUFFER_MANAGER.register_file(
+                file_id, filename,
+                self.FILE_HEADER.PAGE_SIZE,
+                FILE_HEADER_SIZE,
+            )
 
     def read_file_header(self) -> None: 
         with open(self.FILE_PATH, "rb+") as file:
@@ -89,63 +98,54 @@ class HeapFile:
                 self.FILE_HEADER.N_PAGES
             ))
 
-    def read_page(self, page_id: int) -> Page:
-        offset = FILE_HEADER_SIZE + page_id * self.FILE_HEADER.PAGE_SIZE
-        with open(self.FILE_PATH, "rb") as file:
-            file.seek(offset)
-            data = file.read(self.FILE_HEADER.PAGE_SIZE)
-            if len(data) != self.FILE_HEADER.PAGE_SIZE:
-                raise ValueError("Página incompleta o inexistente")
-        return Page(page_id, bytearray(data))
+    def read_page(self, page_id: tuple[int, int]) -> Page:
+        data = self.BUFFER_MANAGER.read_page(page_id)
+        return Page(page_id, data)
     
     def write_page(self, page: Page):
         if len(page.DATA) != self.FILE_HEADER.PAGE_SIZE:
             raise ValueError("Tamaño de página incorrecto")
-        offset = FILE_HEADER_SIZE + page.PAGE_ID * self.FILE_HEADER.PAGE_SIZE
-        with open(self.FILE_PATH, "rb+") as file:
-            file.seek(offset)
-            file.write(page.DATA)
-        self.FILE_HEADER.N_PAGES = max(self.FILE_HEADER.N_PAGES, page.PAGE_ID + 1)
+        self.BUFFER_MANAGER.write_page(page.PAGE_ID, page.DATA)
+        _, page_number = page.PAGE_ID
+        self.FILE_HEADER.N_PAGES = max(self.FILE_HEADER.N_PAGES, page_number + 1)
 
-    def allocate_page(self) -> int:
-        page_id = self.FILE_HEADER.N_PAGES
+    def allocate_page(self) -> tuple[int, int]:
+        page_number = self.FILE_HEADER.N_PAGES
         self.FILE_HEADER.N_PAGES += 1
         self.write_file_header()
-        return page_id
+        return (self.FILE_ID, page_number)
 
-    def create_posting_page(self, posting: PostingEntry) -> int:
+    def create_posting_page(self, posting: PostingEntry) -> tuple[int, int]:
         page_id = self.allocate_page()
         posting_page = PostingPage(page_id, [posting], -1)
         page = posting_page.to_page(self.FILE_HEADER.PAGE_SIZE)
         self.write_page(page)
         return page_id
 
-    def append_to_posting_list(self, start_page_id: int, posting: PostingEntry) -> None:
-        page_id = start_page_id
+    def append_to_posting_list(self, start_page_id: tuple[int, int], posting: PostingEntry) -> tuple[int, int]:
         while True:
-            page = self.read_page(page_id)
+            page = self.read_page(start_page_id)
             posting_page = PostingPage.from_page(page)
 
             if len(posting_page.POSTING_LIST) < self.MAX_ENTRIES:
                 posting_page.POSTING_LIST.append(posting)
                 self.write_page(posting_page.to_page(self.FILE_HEADER.PAGE_SIZE))
-                return
+                return start_page_id
 
             if posting_page.NEXT_PAGE == -1:
                 new_page_id = self.allocate_page()
                 new_page = PostingPage(new_page_id, [posting], -1)
                 self.write_page(new_page.to_page(self.FILE_HEADER.PAGE_SIZE))
 
-                posting_page.NEXT_PAGE = new_page_id
+                posting_page.NEXT_PAGE = new_page_id[1]
                 self.write_page(posting_page.to_page(self.FILE_HEADER.PAGE_SIZE))
-                return
+                return new_page_id
 
-            page_id = posting_page.NEXT_PAGE
+            start_page_id = (self.FILE_ID, posting_page.NEXT_PAGE)
 
-    def upsert_posting(self, start_page_id: int, posting: PostingEntry) -> None:
-        page_id = start_page_id
+    def upsert_posting(self, start_page_id: tuple[int, int], posting: PostingEntry) -> None:
         while True:
-            page = self.read_page(page_id)
+            page = self.read_page(start_page_id)
             posting_page = PostingPage.from_page(page)
 
             for i, entry in enumerate(posting_page.POSTING_LIST):
@@ -158,16 +158,15 @@ class HeapFile:
 
             if posting_page.NEXT_PAGE == -1:
                 break
-            page_id = posting_page.NEXT_PAGE
+            start_page_id = (self.FILE_ID, posting_page.NEXT_PAGE)
 
         self.append_to_posting_list(start_page_id, posting)
 
-    def read_posting_list(self, start_page_id: int) -> list[PostingEntry]:
+    def read_posting_list(self, start_page_id: tuple[int, int]) -> list[PostingEntry]:
         result = []
-        page_id = start_page_id
-        while page_id != -1:
-            page = self.read_page(page_id)
+        while start_page_id[1] != -1:
+            page = self.read_page(start_page_id)
             posting_page = PostingPage.from_page(page)
             result.extend(posting_page.POSTING_LIST)
-            page_id = posting_page.NEXT_PAGE
+            start_page_id = (self.FILE_ID, posting_page.NEXT_PAGE)
         return result
