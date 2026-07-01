@@ -49,6 +49,17 @@ class PersistenceManager:
                         ) STORED,
                         image_histogram VECTOR({int(histogram_dim)})
                     );
+
+                -- Índice para búsqueda textual
+                CREATE INDEX idx_descriptors_texto_vector
+                ON descriptors
+                USING GIN (texto_vector);
+
+                -- Índice para búsqueda por similitud vectorial
+                CREATE INDEX idx_descriptors_image_histogram
+                ON descriptors
+                USING hnsw (image_histogram vector_l2_ops);
+                
                 """)
 
                 self.connection.commit()
