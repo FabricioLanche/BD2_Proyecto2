@@ -14,13 +14,12 @@ class MultimodalSplitter:
         self.image_overlap = image_overlap
         
         self.separators = ["\n\n", "\n", " ", ""]
-        self.image_sequence_id = 1
 
     def split(self, doc_id, data):
         if isinstance(data, str):
             return self._split_text(data, doc_id)
         elif isinstance(data, np.ndarray):
-            return self._split_image(data)
+            return self._split_image(data, doc_id)
         else:
             raise TypeError("Formato no soportado. Debe ser 'str' o 'np.ndarray'.")
 
@@ -82,7 +81,7 @@ class MultimodalSplitter:
              
         return chunks
 
-    def _split_image(self, image_matrix):
+    def _split_image(self, image_matrix, doc_id):
         #extraer dimensiones (RGB 3 canales o Escala de grises 2 canales)
         if len(image_matrix.shape) == 3:
             h, w, channels = image_matrix.shape
@@ -124,16 +123,14 @@ class MultimodalSplitter:
         #sliding window
         patches_out= []
         new_h, new_w = padded_img.shape[:2]
-        current_id = self.image_sequence_id
 
         for y in range(0, new_h - patch_h + 1, stride_y):
             for x in range(0, new_w - patch_w + 1, stride_x):
                 #recortar el patch
                 patch = padded_img[y:y+patch_h, x:x+patch_w]
 
-                #guardar tupla (id,patch)
-                patches_out.append((current_id, patch))
-        self.image_sequence_id += 1
+                #guardar tupla (doc_id, patch) con el id real del orquestador
+                patches_out.append((doc_id, patch))
 
         return patches_out
 

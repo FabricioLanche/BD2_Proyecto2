@@ -17,17 +17,25 @@ class PersistenceManager:
             password=password
         )
 
+        # la extension debe existir ANTES de register_vector (si no, falla con
+        # 'vector type not found in the database')
+        with self.connection.cursor() as cursor:
+            cursor.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+        self.connection.commit()
+
         register_vector(self.connection)
 
     def _get_cursor(self):
         return self.connection.cursor()
     
-    def create_tables(self):
+    def create_tables(self, histogram_dim: int = 128):
+        # histogram_dim = k del codebook visual; el orquestador lo pasa
+        # tras construir el codebook para que la columna calce con el histograma.
 
         with self._get_cursor() as cursor:
             try:
 
-                cursor.execute("""
+                cursor.execute(f"""
                     CREATE EXTENSION IF NOT EXISTS vector;
 
                     DROP TABLE IF EXISTS descriptors;
@@ -39,7 +47,7 @@ class PersistenceManager:
                         texto_vector TSVECTOR GENERATED ALWAYS AS (
                             to_tsvector('english', coalesce(texto, ''))
                         ) STORED,
-                        image_histogram VECTOR(128)
+                        image_histogram VECTOR({int(histogram_dim)})
                     );
                 """)
 
@@ -91,9 +99,9 @@ class PersistenceManager:
                     cursor,
                     """
                     UPDATE descriptors AS d
-                    SET image_histogram = data.image_histogram
+                    SET image_histogram = data.image_histogram::vector
                     FROM (VALUES %s) AS data(doc_id, image_histogram)
-                    WHERE d.doc_id = data.doc_id;
+                    WHERE d.doc_id = data.doc_id::integer;
                     """,
                     rows,
                     page_size=page_size
