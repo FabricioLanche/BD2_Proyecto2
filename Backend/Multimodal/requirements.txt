@@ -5,3 +5,5 @@ scikit-learn
 nltk
 psycopg2-binary
 pgvector
+kagglehub[pandas-datasets] 
+requests
