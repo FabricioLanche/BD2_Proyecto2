@@ -39,4 +39,4 @@ class DatabaseRepository:
             }
             
         }
-        return mock_db.get(str(doc_id), None)
+        return mock_db.get(str(doc_id), mock_db["1"])

@@ -6,12 +6,20 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from Multimodal.Online.Search import SearchEngine
 from API.infraestructure.database import DatabaseRepository
+
+class MockSearchEngine:
+    def search_image(self, image_bytes: bytes, top_k: int):
+        return [("1", 0.99), ("2", 0.85), ("999", 0.45)]
+
+    def search_multimodal(self, image_bytes: Optional[bytes], text_query: str, weight_visual: float, weight_text: float, top_k: int):
+        return [("1", 0.95), ("2", 0.70)]
+
 
 class SearchService:
     def __init__(self):
-        self.search_engine = SearchEngine()
+        # 2. INSTANCIAMOS EL MOCK, NO EL REAL
+        self.search_engine = MockSearchEngine()
         self.db = DatabaseRepository()
 
     def execute_visual_search(self, image_bytes: bytes, top_k: int):
