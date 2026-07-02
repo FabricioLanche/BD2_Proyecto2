@@ -36,6 +36,7 @@ class SearchService:
             results.append({
                 "id": doc_id,
                 "name": meta.get("ProductDisplayName", "Unknown"), 
+                "image_url": meta.get("image_url", ""),
                 "match_percentage": match_pct
             })
         return results
