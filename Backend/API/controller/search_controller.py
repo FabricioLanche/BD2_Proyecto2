@@ -36,7 +36,7 @@ async def multimodal_search(
 ):
     image_bytes = await image.read() if image else None
     results = _svc(request).execute_multimodal_search(
-        image_bytes, text_query, weight_visual, weight_text, top_k
+        image_bytes, text_query, weight_visual / 100.0, weight_text / 100.0, top_k
     )
     return {"results": results}
 
