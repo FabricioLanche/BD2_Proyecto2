@@ -39,6 +39,11 @@ DEFAULT_DB = {
     "user": "postgres", "password": "123456",
 }
 
+TEXT_FIELDS = [
+    "gender", "master_category", "sub_category", "article_type",
+    "base_colour", "season", "year", "usage", "product_name",
+]
+
 
 class OnlineOrchestrator:
     def __init__(self, db_config: Optional[dict] = None, buffer_size: int = 1_000_000_000):
@@ -62,6 +67,16 @@ class OnlineOrchestrator:
     def _load_pickle(name: str):
         with open(DATA_DIR / name, "rb") as f:
             return pickle.load(f)
+        
+
+    @staticmethod
+    def _parse_texto(texto: str | None) -> dict:
+        """Desconcatena el campo texto (separado por |) en sus campos originales."""
+        if not texto:
+            return {f: "" for f in TEXT_FIELDS}
+        parts = texto.split("|")
+        parts += [""] * (len(TEXT_FIELDS) - len(parts))
+        return dict(zip(TEXT_FIELDS, parts))
 
     # Consulta -> histograma (reusa las etapas del offline)
     def _text_histogram(self, text: str) -> np.ndarray:
@@ -109,11 +124,20 @@ class OnlineOrchestrator:
         results = []
         for neg_score, doc_id in top:
             url, texto = meta.get(doc_id, (None, None))
+            fields = self._parse_texto(texto)
             results.append({
-                "doc_id": doc_id,
-                "score": round(-neg_score, 6),
-                "url": url,
-                "texto": texto,
+                "doc_id":          doc_id,
+                "score":           round(-neg_score, 6),
+                "url":             url,
+                "product_name":    fields["product_name"],
+                "master_category": fields["master_category"],
+                "sub_category":    fields["sub_category"],
+                "article_type":    fields["article_type"],
+                "base_colour":     fields["base_colour"],
+                "season":          fields["season"],
+                "year":            fields["year"],
+                "usage":           fields["usage"],
+                "gender":          fields["gender"],
             })
         return results
 
@@ -146,6 +170,9 @@ class OnlineOrchestrator:
         self.search.buffer_manager.close()
         if self.conn and not self.conn.closed:
             self.conn.close()
+
+    
+    
 
 
 def main() -> None:
