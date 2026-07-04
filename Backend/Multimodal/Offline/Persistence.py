@@ -49,6 +49,23 @@ class PersistenceManager:
                         ) STORED,
                         image_histogram VECTOR({int(histogram_dim)})
                     );
+
+                CREATE INDEX idx_descriptors_texto_vector_gin
+                ON descriptors
+                USING GIN (texto_vector);
+
+                CREATE INDEX idx_descriptors_texto_vector_gist
+                ON descriptors
+                USING GiST (texto_vector);
+
+                CREATE INDEX idx_descriptors_image_histogram_hnsw
+                ON descriptors
+                USING hnsw (image_histogram vector_l2_ops);
+            
+                CREATE INDEX idx_descriptors_image_histogram_ivfflat
+                ON descriptors
+                USING ivfflat (image_histogram vector_l2_ops)
+                WITH (lists = 100);
                 """)
 
                 self.connection.commit()
