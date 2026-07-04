@@ -60,7 +60,7 @@ def load_dataset(dataset_dir: Path, limit: int | None = None
     present = [c for c in TEXT_COLUMNS if c in styles.columns]
     styles[present] = styles[present].fillna("").astype(str)
     styles["texto"] = (
-        styles[present].agg(" ".join, axis=1).str.replace(r"\s+", " ", regex=True).str.strip()
+        styles[present].agg("|".join, axis=1).str.replace(r"\s+", " ", regex=True).str.strip()
     )
     styles = styles.rename(columns={"id": "doc_id"})
 
