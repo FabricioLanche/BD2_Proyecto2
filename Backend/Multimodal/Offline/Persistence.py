@@ -61,7 +61,11 @@ class PersistenceManager:
                 CREATE INDEX idx_descriptors_image_histogram_hnsw
                 ON descriptors
                 USING hnsw (image_histogram vector_l2_ops);
-                
+            
+                CREATE INDEX idx_descriptors_image_histogram_ivfflat
+                ON descriptors
+                USING ivfflat (image_histogram vector_l2_ops)
+                WITH (lists = 100);
                 """)
 
                 self.connection.commit()
