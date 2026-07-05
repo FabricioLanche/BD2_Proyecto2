@@ -8,6 +8,10 @@ const navItems = [
   { id: 'recommendation-engine', label: 'Find your look', icon: 'auto_awesome' },
 ]
 
+const bottomLinks = [
+  { id: 'user-manual', label: 'Manual de usuario', icon: 'help_outline' },
+]
+
 export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
   return (
     <nav className="fixed left-0 top-0 h-full w-[260px] flex flex-col p-stack-md gap-stack-sm bg-[#F5F0E8] border-r border-[#E0D8CC] z-20 hidden md:flex">
@@ -24,6 +28,31 @@ export default function Sidebar({ currentPage, onNavigate }: SidebarProps) {
       <div className="flex flex-col gap-1 flex-1 px-stack-xs">
         <p className="font-label-sm text-label-sm text-[#B0A898] uppercase tracking-wider px-stack-sm mb-stack-xs">DISCOVER</p>
         {navItems.map((item) => {
+          const isActive = currentPage === item.id
+          return (
+            <button
+              key={item.id}
+              onClick={() => onNavigate(item.id)}
+              className={`flex items-center gap-stack-sm px-stack-md py-stack-sm rounded-xl transition-all duration-150 text-left ${
+                isActive
+                  ? 'bg-[#C9A96E]/10 text-[#7A5C1E] shadow-sm'
+                  : 'text-[#6B5A45] hover:bg-black/5 active:scale-[0.98]'
+              }`}
+            >
+              <span
+                className="material-symbols-outlined text-[20px]"
+                style={isActive ? { fontVariationSettings: "'FILL' 1" } : undefined}
+              >
+                {item.icon}
+              </span>
+              <span className="font-label-md text-label-md">{item.label}</span>
+            </button>
+          )
+        })}
+      </div>
+
+      <div className="flex flex-col gap-1 px-stack-xs mb-stack-sm">
+        {bottomLinks.map((item) => {
           const isActive = currentPage === item.id
           return (
             <button
