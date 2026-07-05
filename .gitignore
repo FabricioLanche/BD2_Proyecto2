@@ -37,3 +37,9 @@ npm-debug.log*
 
 # Project specific
 base_2_project
+
+# Local tooling (no subir al repo)
+tools/
+
+# Artefactos generados por el orquestador offline
+Backend/Multimodal/Data/

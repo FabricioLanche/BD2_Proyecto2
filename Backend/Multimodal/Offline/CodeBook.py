@@ -1,8 +1,12 @@
 from typing import (Iterator, Iterable, Tuple, List, Dict)
 from sklearn.cluster import MiniBatchKMeans
 from collections import Counter
+from pathlib import Path
 import numpy as np
+import pickle
 
+DATA_DIR = Path(__file__).resolve().parent.parent / "Data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 class VisualCodebookBuilder:
 
@@ -13,7 +17,7 @@ class VisualCodebookBuilder:
         self.random_state = random_state
 
     # Creación de batches
-    def _batch_generator(self, data: Iterator[Tuple[str, np.ndarray]]) -> Iterator[np.ndarray]:
+    def _batch_generator(self, data: Iterator[Tuple[int, np.ndarray]]) -> Iterator[np.ndarray]:
         batch = []
         for _, vector in data:                                                                                                            
             batch.append(vector)
@@ -59,7 +63,7 @@ class VisualCodebookBuilder:
         return ks[elbow_index + 1]
     
     # Modelo final
-    def build(self, data_factory) -> np.ndarray:
+    def build(self, data_factory, filename: str = "visual_codebook.pkl") -> np.ndarray:
         best_k = self._select_k(data_factory)
         print(f"K seleccionado: {best_k}")
 
@@ -67,8 +71,13 @@ class VisualCodebookBuilder:
 
         for batch in self._batch_generator (data_factory()):
             model.partial_fit(batch)
+        
+        codebook = model.cluster_centers_
 
-        return model.cluster_centers_
+        with open(DATA_DIR / filename, "wb") as f:
+            pickle.dump(codebook, f)
+
+        return codebook
 
 class TextCodebookBuilder:
 
@@ -79,14 +88,16 @@ class TextCodebookBuilder:
         self.k = k
         
     # Frecuencia global de las palabras basadas en el vocabulario
-    def build(self) -> List[str]:
+    def build(self, filename: str = "text_codebook.pkl") -> List[str]:
         global_frequency = Counter()
 
         for _, bow in self.chunks:
             global_frequency.update(bow)
 
         top_words = global_frequency.most_common(self.k)
-
         codebook = [word for word, freq in top_words]
+
+        with open(DATA_DIR / filename, "wb") as f:
+            pickle.dump(codebook, f)
 
         return codebook
