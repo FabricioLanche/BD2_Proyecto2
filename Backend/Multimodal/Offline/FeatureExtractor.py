@@ -77,6 +77,11 @@ class TextFeatureExtractor(BaseFeatureExtractor):
         self._vocab_readonly: bool = False
 
     def load_vocab(self, vocab: Dict[str, int]) -> None:
+        """Carga un vocabulario preexistente en modo read-only.
+
+        compute_bow() no añadirá palabras nuevas; los tokens fuera
+        del vocabulario se ignoran silenciosamente.
+        """
         self.vocab = vocab
         self._next_id = max(vocab.values()) + 1 if vocab else 0
         self._vocab_readonly = True
