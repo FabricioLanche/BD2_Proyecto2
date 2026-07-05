@@ -1,4 +1,4 @@
-from typing import (Iterator, Iterable, Tuple, List, Dict)
+from typing import (Iterator, Iterable, Optional, Tuple, List, Dict)
 from sklearn.cluster import MiniBatchKMeans
 from collections import Counter
 from pathlib import Path
@@ -12,76 +12,68 @@ class VisualCodebookBuilder:
 
     def __init__(
         self,
-        k: int = 100,
+        n_documents: int,
+        k: int = 512,
         batch_size: int = 1024,
         random_state: int = 42
     ):
         self.k = k
+        self.n_documents = n_documents
         self.batch_size = batch_size
         self.random_state = random_state
+        self._model: MiniBatchKMeans | None = None
+        self._buffer: List[np.ndarray] = []
 
-    # Creación de batches
-    def _batch_generator(
-        self,
-        data: Iterator[Tuple[int, np.ndarray]]
-    ) -> Iterator[np.ndarray]:
+    def _init_model(self) -> None:
+        if self._model is None:
+            self._model = MiniBatchKMeans(
+                n_clusters=self.k,
+                batch_size=self.batch_size,
+                random_state=self.random_state
+            )
 
-        batch = []
+    def _flush(self) -> None:
+        if not self._buffer:
+            return
+        batch = np.array(self._buffer)
+        self._buffer = []
+        self._init_model()
+        self._model.partial_fit(batch)
 
-        for _, vector in data:
-            batch.append(vector)
+    def accumulate(self, features) -> None:
+        for _, d in features:
+            self._buffer.append(d)
+            if len(self._buffer) >= self.batch_size:
+                self._flush()
 
-            if len(batch) == self.batch_size:
-                yield np.array(batch)
-                batch = []
-
-        if batch:
-            yield np.array(batch)
-
-    # Modelo final con K fijo
-    def build(
-        self,
-        data_factory,
-        filename: str = "visual_codebook.pkl"
-    ) -> np.ndarray:
-
-        print(f"K fijo utilizado: {self.k}")
-
-        model = MiniBatchKMeans(
-            n_clusters=self.k,
-            batch_size=self.batch_size,
-            random_state=self.random_state
-        )
-
-        for batch in self._batch_generator(data_factory()):
-            model.partial_fit(batch)
-
-        codebook = model.cluster_centers_
-
+    def finalize(self) -> np.ndarray:
+        self._flush()
+        self._init_model()
+        codebook = self._model.cluster_centers_
+        filename = f"visual_codebook_{self.n_documents}.pkl"
         with open(DATA_DIR / filename, "wb") as f:
             pickle.dump(codebook, f)
-
         return codebook
 
 class TextCodebookBuilder:
 
-    def __init__(self, vocabulary: List[str], chunks: List[Tuple[int, Dict[str, int]]], k: int = 100) -> List[str]:
-
-        self.vocabulary = vocabulary
-        self.chunks = chunks
+    def __init__(
+        self, 
+        n_documents: int,
+        k: int = 1000
+    ):
+        self.n_documents = n_documents
         self.k = k
-        
-    # Frecuencia global de las palabras basadas en el vocabulario
-    def build(self, filename: str = "text_codebook.pkl") -> List[str]:
-        global_frequency = Counter()
+        self.counter = Counter()
 
-        for _, bow in self.chunks:
-            global_frequency.update(bow)
+    def accumulate(self, features) -> None:
+        for _, bow in features:
+            self.counter.update(bow)
 
-        top_words = global_frequency.most_common(self.k)
-        codebook = [word for word, freq in top_words]
-
+    def finalize(self) -> List[int]:
+        top_words = self.counter.most_common(self.k)
+        codebook: List[int] = [word_id for word_id, _ in top_words]
+        filename = f"text_codebook_{self.n_documents}.pkl"
         with open(DATA_DIR / filename, "wb") as f:
             pickle.dump(codebook, f)
-
         return codebook
