@@ -1,35 +1,35 @@
 const sections = [
   {
     icon: 'image_search',
-    title: 'Shop by photo',
-    subtitle: 'Visual search with images',
+    title: 'Buscar por foto',
+    subtitle: 'Búsqueda visual con imágenes',
     steps: [
-      'Upload a fashion photo by clicking or dragging into the upload zone.',
-      'Click "Search looks" to find visually similar products from the catalog.',
-      'Browse results sorted by similarity percentage. Click any card for details.',
-      'Use the detail modal to view attributes like colour, season, category, and more.',
+      'Sube una foto de moda haciendo clic o arrastrándola al área de carga.',
+      'Haz clic en "Search looks" para encontrar productos visualmente similares del catálogo.',
+      'Navega los resultados ordenados por porcentaje de similitud. Haz clic en cualquier tarjeta para ver detalles.',
+      'Usa el modal de detalle para ver atributos como color, temporada, categoría y más.',
     ],
   },
   {
     icon: 'auto_awesome',
-    title: 'Find your look',
-    subtitle: 'Multimodal search (image + text)',
+    title: 'Encuentra tu look',
+    subtitle: 'Búsqueda multimodal (imagen + texto)',
     steps: [
-      'Upload a photo, type a description, or use both for richer results.',
-      'Adjust the fusion slider to control how much weight each input has.',
-      'The slider lets you prioritise the image (drag left) or the text (drag right).',
-      'Click "Search looks" to get recommendations combining both modalities.',
+      'Sube una foto, escribe una descripción, o usa ambas para resultados más precisos.',
+      'Ajusta el slider de fusión para controlar el peso de cada entrada.',
+      'El slider permite priorizar la imagen (arrastra a la izquierda) o el texto (arrastra a la derecha).',
+      'Haz clic en "Search looks" para obtener recomendaciones combinando ambas modalidades.',
     ],
   },
   {
     icon: 'touch_app',
-    title: 'Interacting with results',
-    subtitle: 'Product cards & pagination',
+    title: 'Interactuar con resultados',
+    subtitle: 'Tarjetas de producto y paginación',
     steps: [
-      'Each product card shows a thumbnail, category, and match percentage.',
-      'Click a card to open the detail modal with full product metadata.',
-      'Use the pagination controls at the bottom to navigate through pages.',
-      'Press Escape or click outside the modal to close it.',
+      'Cada tarjeta muestra una miniatura, categoría y porcentaje de coincidencia.',
+      'Haz clic en una tarjeta para abrir el modal con todos los metadatos del producto.',
+      'Usa los controles de paginación en la parte inferior para navegar entre páginas.',
+      'Presiona Escape o haz clic fuera del modal para cerrarlo.',
     ],
   },
 ]
@@ -40,7 +40,7 @@ export default function UserManual() {
       <header className="flex flex-col gap-1">
         <span className="flex items-center gap-1 font-label-sm text-label-sm text-primary/70 mb-1">
           <span className="material-symbols-outlined text-[13px]">help_outline</span>
-          User guide
+          Guía de usuario
         </span>
         <h1 className="font-serif text-display-lg text-on-surface">Mini manual de usuario</h1>
         <p className="font-body-lg text-body-lg text-on-surface-variant/70">
@@ -86,9 +86,9 @@ export default function UserManual() {
             <ul className="flex flex-col gap-stack-sm">
               {[
                 'Usa fotos con buena iluminación y la prenda bien visible para mejores resultados.',
-                'En "Find your look", combiná imagen y texto para búsquedas más precisas.',
+                'En "Find your look", combina imagen y texto para búsquedas más precisas.',
                 'El slider de fusión permite dar más importancia a la imagen o al texto según tu necesidad.',
-                'Hacé clic en cualquier producto para ver sus atributos detallados.',
+                'Haz clic en cualquier producto para ver sus atributos detallados.',
               ].map((tip, i) => (
                 <li key={i} className="flex gap-2 font-body-md text-body-md text-on-surface-variant/80">
                   <span className="text-primary mt-1">•</span>
