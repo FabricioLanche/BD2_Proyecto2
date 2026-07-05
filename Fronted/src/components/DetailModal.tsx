@@ -38,9 +38,8 @@ export default function DetailModal({ product, onClose }: DetailModalProps) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="relative">
-          <div className="h-64 sm:h-72 w-full bg-surface overflow-hidden">
-            <img src={product.imageUrl} alt={product.title} className="w-full h-full object-cover" />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-black/10 to-transparent" />
+          <div className="h-80 sm:h-96 w-full bg-surface-container-highest flex items-center justify-center overflow-hidden">
+            <img src={product.imageUrl} alt={product.title} className="w-full h-full object-contain" />
           </div>
           <button
             onClick={onClose}

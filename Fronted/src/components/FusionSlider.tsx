@@ -14,10 +14,10 @@ export default function FusionSlider({ value: controlledValue, onChange }: Fusio
     const track = trackRef.current
     if (!track) return
     const rect = track.getBoundingClientRect()
-    // left = 0% text (all image), right = 100% text
+    // left = 0% image, right = 100% image (thumb es el divisor)
     const raw = (clientX - rect.left) / rect.width
-    const pct = Math.round(Math.max(0, Math.min(1, raw)) * 100)
-    onChange?.(pct)
+    const imagePct = Math.round(Math.max(0, Math.min(1, raw)) * 100)
+    onChange?.(100 - imagePct)  // convertir a textWeight
   }, [onChange])
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -44,8 +44,8 @@ export default function FusionSlider({ value: controlledValue, onChange }: Fusio
     document.addEventListener('touchend', onEnd)
   }, [handleMove])
 
-  // textWeight% from left = thumb position
-  const thumbLeftPct = textWeight
+  // imageWeight% from left = thumb position (thumb divide imagen a la izq, texto a la der)
+  const thumbLeftPct = imageWeight
 
   return (
     <div className="flex items-center gap-3 w-full select-none">
@@ -64,12 +64,12 @@ export default function FusionSlider({ value: controlledValue, onChange }: Fusio
         onMouseDown={handleMouseDown}
         onTouchStart={handleTouchStart}
       >
-        {/* Image fill — left portion */}
+        {/* Image fill — left portion, desde el borde hasta el thumb */}
         <div
           className="absolute left-0 top-0 bottom-0 bg-primary/40 rounded-full pointer-events-none transition-[width] duration-75"
           style={{ width: `${thumbLeftPct}%` }}
         />
-        {/* Text fill — right portion */}
+        {/* Text fill — right portion, desde el thumb hasta el borde */}
         <div
           className="absolute right-0 top-0 bottom-0 bg-secondary/30 rounded-full pointer-events-none transition-[width] duration-75"
           style={{ width: `${100 - thumbLeftPct}%` }}

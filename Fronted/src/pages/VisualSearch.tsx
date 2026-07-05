@@ -15,6 +15,7 @@ export default function VisualSearch() {
   const [results, setResults] = useState<ProductCardData[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [topK, setTopK] = useState(10)
 
   const totalPages = Math.max(1, Math.ceil(results.length / PER_PAGE))
   const visible = useMemo(() => results.slice((page - 1) * PER_PAGE, page * PER_PAGE), [results, page])
@@ -34,7 +35,7 @@ export default function VisualSearch() {
     setPage(1)
     setLoading(true)
     try {
-      const data = await visualSearch(imageFile)
+      const data = await visualSearch(imageFile, topK)
       setResults(data)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Search failed')
@@ -85,9 +86,22 @@ export default function VisualSearch() {
             </>
           )}
         </button>
-        {disabled && (
-          <span className="font-body-sm text-body-sm text-on-surface-variant/40">Need a photo to search</span>
-        )}
+        <div className="flex items-center gap-2">
+          <label className="font-label-sm text-label-sm text-on-surface-variant/50 whitespace-nowrap">Results</label>
+          <select
+            value={topK}
+            onChange={(e) => setTopK(Number(e.target.value))}
+            className="bg-surface-container border border-outline-variant/40 rounded-lg px-2.5 py-1.5 font-label-sm text-label-sm text-on-surface outline-none focus:ring-1 focus:ring-primary/40"
+          >
+            <option value={10}>10</option>
+            <option value={20}>20</option>
+            <option value={30}>30</option>
+            <option value={50}>50</option>
+          </select>
+          {disabled && (
+            <span className="font-body-sm text-body-sm text-on-surface-variant/40">Need a photo to search</span>
+          )}
+        </div>
       </div>
 
       {error && (
