@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Optional
 import struct
 import os
 
@@ -49,7 +50,42 @@ class PostingPage:
             struct.pack_into(POSTING_ENTRY_FORMAT, data, offset, entry.DOC_ID, entry.TF)
             offset += POSTING_ENTRY_SIZE
         return Page(self.PAGE_ID, data)
-    
+
+
+FLOAT_ENTRY_FORMAT = "<f"
+FLOAT_ENTRY_SIZE = struct.calcsize(FLOAT_ENTRY_FORMAT)
+
+class FloatEntry:
+    def __init__(self, value: float):
+        self.VALUE = value
+
+class FloatPage:
+    def __init__(self, page_id: tuple[int, int], values: list[float], next_page: int = -1):
+        self.PAGE_ID = page_id
+        self.VALUES = values
+        self.NEXT_PAGE = next_page
+
+    @staticmethod
+    def from_page(page: Page) -> "FloatPage":
+        data = page.DATA
+        next_page, n_floats = struct.unpack(PAGE_HEADER_FORMAT, data[:PAGE_HEADER_SIZE])
+        values = []
+        offset = PAGE_HEADER_SIZE
+        for _ in range(n_floats):
+            v = struct.unpack(FLOAT_ENTRY_FORMAT, data[offset:offset+FLOAT_ENTRY_SIZE])[0]
+            values.append(v)
+            offset += FLOAT_ENTRY_SIZE
+        return FloatPage(page.PAGE_ID, values, next_page)
+
+    def to_page(self, page_size: int) -> Page:
+        data = bytearray(page_size)
+        struct.pack_into(PAGE_HEADER_FORMAT, data, 0, self.NEXT_PAGE, len(self.VALUES))
+        offset = PAGE_HEADER_SIZE
+        for v in self.VALUES:
+            struct.pack_into(FLOAT_ENTRY_FORMAT, data, offset, v)
+            offset += FLOAT_ENTRY_SIZE
+        return Page(self.PAGE_ID, data)
+
 @dataclass
 class FileHeader:
     PAGE_SIZE: int = 8192
@@ -76,6 +112,7 @@ class HeapFile:
             self.write_file_header()
         finally:
             self.MAX_ENTRIES = (self.FILE_HEADER.PAGE_SIZE - PAGE_HEADER_SIZE) // POSTING_ENTRY_SIZE
+            self.MAX_FLOATS = (self.FILE_HEADER.PAGE_SIZE - PAGE_HEADER_SIZE) // FLOAT_ENTRY_SIZE
             self.BUFFER_MANAGER.register_file(
                 file_id, filename,
                 self.FILE_HEADER.PAGE_SIZE,
@@ -170,3 +207,19 @@ class HeapFile:
             result.extend(posting_page.POSTING_LIST)
             start_page_id = (self.FILE_ID, posting_page.NEXT_PAGE)
         return result
+
+    # ── Float page methods ──────────────────────────────────────
+
+    def create_float_page(self, n_floats: int = 1) -> tuple[int, int]:
+        page_id = self.allocate_page()
+        fp = FloatPage(page_id, [0.0] * n_floats, -1)
+        self.write_page(fp.to_page(self.FILE_HEADER.PAGE_SIZE))
+        return page_id
+
+    def read_float_values(self, page_id: tuple[int, int]) -> list[float]:
+        page = self.read_page(page_id)
+        return FloatPage.from_page(page).VALUES
+
+    def write_float_values(self, page_id: tuple[int, int], values: list[float]) -> None:
+        fp = FloatPage(page_id, values, -1)
+        self.write_page(fp.to_page(self.FILE_HEADER.PAGE_SIZE))
