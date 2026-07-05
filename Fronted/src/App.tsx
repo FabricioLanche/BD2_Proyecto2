@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import Layout from './components/Layout'
 import RecommendationEngine from './pages/RecommendationEngine'
 import VisualSearch from './pages/VisualSearch'
+import UserManual from './pages/UserManual'
 import './index.css'
 
 export default function App() {
@@ -15,6 +16,7 @@ export default function App() {
     <Layout currentPage={page} onNavigate={setPage}>
       {page === 'visual-search' && <VisualSearch />}
       {page === 'recommendation-engine' && <RecommendationEngine />}
+      {page === 'user-manual' && <UserManual />}
     </Layout>
   )
 }
