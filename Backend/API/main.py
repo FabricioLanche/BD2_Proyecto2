@@ -1,4 +1,5 @@
 import sys
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -19,7 +20,8 @@ except Exception:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    svc = SearchService()
+    dataset_size = int(os.getenv("DATASET_SIZE", "1000"))
+    svc = SearchService(n_documents=dataset_size)
     _ = svc.orchestrator
     app.state.search_service = svc
     yield

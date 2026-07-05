@@ -1,27 +1,33 @@
+from typing import List, Tuple, Union
+
 import numpy as np
 
+Data = Union[str, np.ndarray]
+Chunk = Union[str, np.ndarray]
+ChunkList = List[Tuple[int, Chunk]]
+
 class MultimodalSplitter:
-    def __init__(self, 
-                 chunk_size=160, overlap=0, 
-                 image_patch_size=(64, 64), image_overlap=(0, 0)):
-        """
-        Splitter Multimodal con Chunking Recursivo por caracter para texto, overlap y chunk_size medido en caracteres.
-        """
+    def __init__(
+        self,
+        chunk_size: int = 160,
+        overlap: int = 0,
+        image_patch_size: Tuple[int, int] = (64, 64),
+        image_overlap: Tuple[int, int] = (0, 0),
+    ):
         self.chunk_size = chunk_size
         self.overlap = overlap
-
         self.image_patch_size = image_patch_size
         self.image_overlap = image_overlap
-        
         self.separators = ["\n\n", "\n", " ", ""]
 
-    def split(self, doc_id, data):
+    def split(self, doc_id: int, data: Data) -> ChunkList:
         if isinstance(data, str):
             return self._split_text(data, doc_id)
-        elif isinstance(data, np.ndarray):
+        if isinstance(data, np.ndarray):
             return self._split_image(data, doc_id)
-        else:
-            raise TypeError("Formato no soportado. Debe ser 'str' o 'np.ndarray'.")
+        raise TypeError(
+            "Formato no soportado. Debe ser 'str' o 'np.ndarray'."
+        )
 
 
     def _split_text(self, text, doc_id):
@@ -133,5 +139,3 @@ class MultimodalSplitter:
                 patches_out.append((doc_id, patch))
 
         return patches_out
-
-
