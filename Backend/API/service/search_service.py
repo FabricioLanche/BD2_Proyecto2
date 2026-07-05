@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -12,24 +13,25 @@ if str(PROJECT_ROOT) not in sys.path:
 from Multimodal.Online.Orquestador import OnlineOrchestrator
 
 DB_CONFIG = {
-    "host":     "localhost",
-    "port":     "5432",
-    "database": "multimodal",
-    "user":     "postgres",
-    "password": "123456",
+    "host":     os.getenv("DB_HOST", "localhost"),
+    "port":     os.getenv("DB_PORT", "5432"),
+    "database": os.getenv("DB_NAME", "multimodal"),
+    "user":     os.getenv("DB_USER", "postgres"),
+    "password": os.getenv("DB_PASSWORD", "123456"),
 }
 
 
 class SearchService:
-    def __init__(self, db_config: Optional[dict] = None):
+    def __init__(self, db_config: Optional[dict] = None, n_documents: Optional[int] = None):
         self._orchestrator: Optional[OnlineOrchestrator] = None
         self._db_config = db_config or DB_CONFIG
+        self._n_documents = n_documents if n_documents is not None else int(os.getenv("DATASET_SIZE", "1000"))
 
     @property
     def orchestrator(self) -> OnlineOrchestrator:
         """Singleton: se crea una sola vez al primer acceso."""
         if self._orchestrator is None:
-            self._orchestrator = OnlineOrchestrator(self._db_config)
+            self._orchestrator = OnlineOrchestrator(self._db_config, n_documents=self._n_documents)
         return self._orchestrator
 
     def execute_visual_search(self, image_bytes: bytes, top_k: int) -> list[dict]:
