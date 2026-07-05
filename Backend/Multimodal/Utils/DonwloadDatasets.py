@@ -24,7 +24,7 @@ def download_datasets():
 
     styles_df = kagglehub.load_dataset(
         KaggleDatasetAdapter.PANDAS,
-        "paramaggarwal/fashion-product-images-dataset",
+        "paramaggarwal/fashion-product-images-small",
         "fashion-dataset/styles.csv",
         pandas_kwargs={
             "engine": "python",
@@ -34,9 +34,14 @@ def download_datasets():
 
     images_df = kagglehub.load_dataset(
         KaggleDatasetAdapter.PANDAS,
-        "paramaggarwal/fashion-product-images-dataset",
+        "paramaggarwal/fashion-product-images-small",
         "fashion-dataset/images.csv",
     )
 
+    print(f"Descargados {len(styles_df)} productos y {len(images_df)} imagenes")
     styles_df.to_csv(styles_path, index=False)
     images_df.to_csv(images_path, index=False)
+    print(f"CSVs guardados en {data_dir}")
+
+if __name__ == "__main__":
+    download_datasets()
