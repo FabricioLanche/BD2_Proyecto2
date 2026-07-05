@@ -5,10 +5,6 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \
-    libgl1 \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
 
 COPY Backend/API/requirements.txt Backend/API/requirements.txt
 COPY Backend/Multimodal/requirements.txt Backend/Multimodal/requirements.txt
