@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 
 interface UploadZoneProps {
   imagePreview?: string | null
@@ -10,13 +10,46 @@ interface UploadZoneProps {
 
 export default function UploadZone({ imagePreview, onUpload, onClear, label = 'Drop a photo here', subLabel = 'Or click to browse your files' }: UploadZoneProps) {
   const inputRef = useRef<HTMLInputElement>(null)
+  const [dragging, setDragging] = useState(false)
 
-  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFile = (file: File) => {
+    if (file.type.startsWith('image/')) {
+      onUpload(file)
+    }
+  }
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
-      onUpload(file)
+      handleFile(file)
       e.target.value = ''
     }
+  }
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!imagePreview) setDragging(true)
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return
+    setDragging(false)
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragging(false)
+    const file = e.dataTransfer.files?.[0]
+    if (file) handleFile(file)
   }
 
   return (
@@ -24,9 +57,15 @@ export default function UploadZone({ imagePreview, onUpload, onClear, label = 'D
       className={`rounded-xl border-2 flex flex-col items-center justify-center text-center min-h-[200px] transition-all duration-300 relative overflow-hidden ${
         imagePreview
           ? 'border-outline-variant/60 bg-surface-container-lowest p-1'
-          : 'border-dashed border-outline-variant bg-surface hover:bg-surface-container hover:border-primary/40 cursor-pointer group py-stack-lg px-stack-md'
+          : dragging
+            ? 'border-primary border-solid bg-primary/5 scale-[1.02] cursor-pointer'
+            : 'border-dashed border-outline-variant bg-surface hover:bg-surface-container hover:border-primary/40 cursor-pointer group py-stack-lg px-stack-md'
       }`}
       onClick={() => !imagePreview && inputRef.current?.click()}
+      onDragOver={handleDragOver}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
     >
       {imagePreview ? (
         <div className="relative w-full h-full group/preview">
@@ -46,12 +85,14 @@ export default function UploadZone({ imagePreview, onUpload, onClear, label = 'D
         </div>
       ) : (
         <>
-          <span className="material-symbols-outlined text-[44px] text-on-surface-variant/60 group-hover:text-primary/60 transition-colors mb-stack-sm">cloud_upload</span>
-          <p className="font-label-md text-label-md text-on-surface">{label}</p>
+          <span className={`material-symbols-outlined text-[44px] transition-colors mb-stack-sm ${dragging ? 'text-primary' : 'text-on-surface-variant/60 group-hover:text-primary/60'}`}>
+            {dragging ? 'move_down' : 'cloud_upload'}
+          </span>
+          <p className="font-label-md text-label-md text-on-surface">{dragging ? 'Drop it!' : label}</p>
           <p className="font-body-md text-body-md text-on-surface-variant/60 mt-1 max-w-[260px]">{subLabel}</p>
         </>
       )}
-      <input ref={inputRef} className="hidden" type="file" accept="image/*" onChange={handleFile} />
+      <input ref={inputRef} className="hidden" type="file" accept="image/*" onChange={handleInputChange} />
     </div>
   )
 }
