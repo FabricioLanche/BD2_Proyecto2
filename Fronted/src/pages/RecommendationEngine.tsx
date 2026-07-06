@@ -2,8 +2,7 @@ import UploadZone from '../components/UploadZone'
 import FusionSlider from '../components/FusionSlider'
 import ProductCard, { type ProductCardData } from '../components/ProductCard'
 import DetailModal from '../components/DetailModal'
-import Pagination from '../components/Pagination'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { multimodalSearch } from '../services/api'
 
 const PER_PAGE = 5
@@ -21,7 +20,6 @@ export default function RecommendationEngine() {
   const [topK, setTopK] = useState(10)
 
   const totalPages = Math.max(1, Math.ceil(results.length / PER_PAGE))
-  const visible = useMemo(() => results.slice((page - 1) * PER_PAGE, page * PER_PAGE), [results, page])
 
   const handleUpload = (file: File) => {
     setImagePreview(URL.createObjectURL(file))
@@ -62,9 +60,192 @@ export default function RecommendationEngine() {
 
   const disabled = loading || (!imageFile && !textQuery.trim())
 
-  return (
-    <>
-      <div className="flex flex-col gap-1">
+  const searchBtn = (
+    <button
+      onClick={handleSearch}
+      disabled={disabled}
+      className="flex items-center gap-2 bg-search-bg text-search-text font-label-md text-label-md px-6 py-2.5 rounded-xl hover:brightness-125 transition-all disabled:opacity-40 disabled:pointer-events-none active:scale-[0.98] shadow-sm"
+    >
+      {loading ? (
+        <>
+          <span className="material-symbols-outlined text-[18px] animate-spin">progress_activity</span>
+          Searching…
+        </>
+      ) : (
+        <>
+          <span className="material-symbols-outlined text-[18px]">search</span>
+          Search looks
+        </>
+      )}
+    </button>
+  )
+
+  const inputCard = (
+    <div className="border border-outline-variant/60 bg-surface-container-lowest rounded-2xl overflow-hidden w-full">
+      <div className="p-4 border-b border-outline-variant/40">
+        <UploadZone imagePreview={imagePreview} onUpload={handleUpload} onClear={handleClear} />
+      </div>
+      <div className="px-5 py-3 border-b border-outline-variant/40">
+        <div className="flex items-center gap-4">
+          <span className="font-label-sm text-label-sm text-on-surface-variant/50 whitespace-nowrap shrink-0">Search weight</span>
+          <div className="flex-1 flex justify-center">
+            <div className="w-full max-w-md">
+              <FusionSlider value={textWeight} onChange={setTextWeight} />
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="p-4 flex flex-col">
+        <div className="flex items-center justify-between mb-stack-xs">
+          <label className="flex items-center gap-1.5 font-label-md text-label-md text-on-surface-variant/60" htmlFor="text-query">
+            <span className="material-symbols-outlined text-[16px]">text_fields</span>
+            Describe it
+          </label>
+          {textQuery && (
+            <button
+              type="button"
+              onClick={() => setTextQuery('')}
+              className="text-on-surface-variant/30 hover:text-on-surface-variant/60 transition-colors"
+            >
+              <span className="material-symbols-outlined text-[16px]">close</span>
+            </button>
+          )}
+        </div>
+        <textarea
+          className="w-full bg-transparent border-none resize-none outline-none focus:ring-0 p-0 font-body-lg text-body-lg text-on-surface placeholder:text-on-surface-variant/35 leading-relaxed"
+          id="text-query"
+          placeholder='e.g. Oversized cream linen blazer with gold buttons'
+          value={textQuery}
+          onChange={(e) => setTextQuery(e.target.value)}
+          rows={2}
+        />
+        <div className="flex items-center justify-between mt-stack-xs pt-stack-xs border-t border-outline-variant/30">
+          <span className="font-code text-[11px] text-on-surface-variant/35">
+            {textQuery.length > 0 ? `${textQuery.length} characters` : 'Type to describe'}
+          </span>
+          {textQuery && (
+            <span className="font-code text-[11px] text-on-surface-variant/35">
+              {textQuery.trim() ? textQuery.trim().split(/\s+/).length : 0} words
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="border-t border-outline-variant/40 px-4 py-3 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <label className="font-label-sm text-label-sm text-on-surface-variant/50 whitespace-nowrap">Results</label>
+          <select
+            value={topK}
+            onChange={(e) => setTopK(Number(e.target.value))}
+            className="bg-surface-container border border-outline-variant/40 rounded-lg px-2.5 py-1.5 font-label-sm text-label-sm text-on-surface outline-none focus:ring-1 focus:ring-primary/40"
+          >
+            <option value={10}>10</option>
+            <option value={20}>20</option>
+            <option value={30}>30</option>
+            <option value={50}>50</option>
+          </select>
+          {disabled && !loading && (
+            <span className="font-body-sm text-body-sm text-on-surface-variant/40 whitespace-nowrap">Need a photo or description</span>
+          )}
+        </div>
+        {searchBtn}
+      </div>
+    </div>
+  )
+
+  return results.length > 0 ? (
+    <div className="md:grid md:grid-cols-[minmax(340px,420px)_1fr] md:gap-6 min-h-[calc(100vh-5rem)]">
+        <div className="flex flex-col min-h-0 md:sticky md:top-6 md:max-h-[calc(100vh-3rem)] md:overflow-y-auto">
+          <div className="flex-none sticky top-0 z-10 bg-surface-container-lowest">
+            <div className="flex flex-col gap-1 mb-4">
+              <span className="flex items-center gap-1 font-label-sm text-label-sm text-primary/70 mb-1">
+                <span className="material-symbols-outlined text-[13px]">auto_awesome</span>
+                Visual search
+              </span>
+              <h2 className="font-serif text-display-lg text-on-surface">Find your look</h2>
+              <p className="font-body-lg text-body-lg text-on-surface-variant/70">
+                Upload a photo, describe what you're after, or combine both.
+              </p>
+            </div>
+          </div>
+
+        <div className="flex-1 flex flex-col min-h-0">
+          <div className="flex-1 min-h-0" />
+          <div className="flex-none">
+            {inputCard}
+
+            {error && (
+              <div className="bg-error-container/80 text-on-error-container rounded-xl px-4 py-3 font-body-md text-body-md border border-error/10 mt-4">
+                {error}
+              </div>
+            )}
+          </div>
+          <div className="flex-1 min-h-0" />
+        </div>
+      </div>
+
+      <div className="flex flex-col min-h-0">
+        <div className="flex-1 flex flex-col justify-center min-h-0">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-headline-sm text-headline-sm text-on-surface">Recommendations</h3>
+            <span className="font-label-md text-label-md text-on-surface-variant/60 bg-surface-container px-3 py-1 rounded-full">{results.length} results</span>
+          </div>
+
+          <div className="relative">
+            {page > 1 && (
+              <button
+                onClick={() => setPage((p) => p - 1)}
+                className="absolute -left-3 top-1/2 -translate-y-1/2 z-10 w-9 h-9 flex items-center justify-center rounded-full bg-surface-container border border-outline-variant/30 shadow-sm hover:bg-surface-container-high transition-colors"
+              >
+                <span className="material-symbols-outlined text-[18px]">chevron_left</span>
+              </button>
+            )}
+            <div className="overflow-hidden rounded-lg">
+              <div
+                className="flex transition-transform duration-300 ease-out will-change-transform"
+                style={{ transform: `translateX(-${(page - 1) * 100}%)` }}
+              >
+                {Array.from({ length: totalPages }, (_, i) => (
+                  <div key={i} className="grid grid-cols-5 gap-stack-md min-w-0 flex-shrink-0 w-full">
+                    {results.slice(i * PER_PAGE, (i + 1) * PER_PAGE).map((product) => (
+                      <ProductCard key={product.id} product={product} onClick={setSelectedProduct} />
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+            {page < totalPages && (
+              <button
+                onClick={() => setPage((p) => p + 1)}
+                className="absolute -right-3 top-1/2 -translate-y-1/2 z-10 w-9 h-9 flex items-center justify-center rounded-full bg-surface-container border border-outline-variant/30 shadow-sm hover:bg-surface-container-high transition-colors"
+              >
+                <span className="material-symbols-outlined text-[18px]">chevron_right</span>
+              </button>
+            )}
+          </div>
+
+          <div className="flex justify-center gap-2 mt-3">
+            {Array.from({ length: totalPages }, (_, i) => (
+              <button
+                key={i}
+                onClick={() => setPage(i + 1)}
+                className={`w-2 h-2 rounded-full transition-all duration-300 ${
+                  page === i + 1
+                    ? 'bg-primary w-5'
+                    : 'bg-outline-variant/30 hover:bg-outline-variant/50'
+                }`}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {selectedProduct && (
+        <DetailModal product={selectedProduct} onClose={() => setSelectedProduct(null)} />
+      )}
+    </div>
+  ) : (
+    <div className="flex flex-col items-center justify-center min-h-[calc(100vh-5rem)]">
+      <div className="flex flex-col items-center gap-1 text-center mb-6 max-w-lg">
         <span className="flex items-center gap-1 font-label-sm text-label-sm text-primary/70 mb-1">
           <span className="material-symbols-outlined text-[13px]">auto_awesome</span>
           Visual search
@@ -75,118 +256,13 @@ export default function RecommendationEngine() {
         </p>
       </div>
 
-      <div className="border border-outline-variant/60 bg-surface-container-lowest rounded-2xl overflow-hidden">
-        <div className="grid grid-cols-2 divide-x divide-outline-variant/40">
-          <div className="min-h-[160px] p-4">
-            <UploadZone imagePreview={imagePreview} onUpload={handleUpload} onClear={handleClear} />
-          </div>
-          <div className="min-h-[160px] p-4 flex flex-col">
-            <div className="flex items-center justify-between mb-stack-xs">
-              <label className="flex items-center gap-1.5 font-label-md text-label-md text-on-surface-variant/60" htmlFor="text-query">
-                <span className="material-symbols-outlined text-[16px]">text_fields</span>
-                Describe it
-              </label>
-              {textQuery && (
-                <button
-                  type="button"
-                  onClick={() => setTextQuery('')}
-                  className="text-on-surface-variant/30 hover:text-on-surface-variant/60 transition-colors"
-                >
-                  <span className="material-symbols-outlined text-[16px]">close</span>
-                </button>
-              )}
-            </div>
-            <textarea
-              className="w-full flex-1 bg-transparent border-none resize-none outline-none focus:ring-0 p-0 font-body-lg text-body-lg text-on-surface placeholder:text-on-surface-variant/35 leading-relaxed"
-              id="text-query"
-              placeholder='e.g. Oversized cream linen blazer with gold buttons'
-              value={textQuery}
-              onChange={(e) => setTextQuery(e.target.value)}
-            />
-            <div className="flex items-center justify-between mt-stack-xs pt-stack-xs border-t border-outline-variant/30">
-              <span className="font-code text-[11px] text-on-surface-variant/35">
-                {textQuery.length > 0 ? `${textQuery.length} characters` : 'Type to describe'}
-              </span>
-              {textQuery && (
-                <span className="font-code text-[11px] text-on-surface-variant/35">
-                  {textQuery.trim() ? textQuery.trim().split(/\s+/).length : 0} words
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="border-t border-outline-variant/40 px-5 py-3 flex items-center gap-4">
-          <span className="font-label-sm text-label-sm text-on-surface-variant/50 whitespace-nowrap shrink-0">Search weight</span>
-          <div className="flex-1 flex justify-center">
-            <div className="w-full max-w-md">
-              <FusionSlider value={textWeight} onChange={setTextWeight} />
-            </div>
-          </div>
-          <div className="w-[140px] shrink-0" />
-        </div>
-
-        <div className="border-t border-outline-variant/40 px-4 py-3 flex items-center justify-between">
-          <button
-            onClick={handleSearch}
-            disabled={disabled}
-            className="flex items-center gap-2 bg-search-bg text-search-text font-label-md text-label-md px-6 py-2.5 rounded-xl hover:brightness-125 transition-all disabled:opacity-40 disabled:pointer-events-none active:scale-[0.98] shadow-sm"
-          >
-            {loading ? (
-              <>
-                <span className="material-symbols-outlined text-[18px] animate-spin">progress_activity</span>
-                Searching…
-              </>
-            ) : (
-              <>
-                <span className="material-symbols-outlined text-[18px]">search</span>
-                Search looks
-              </>
-            )}
-          </button>
-          <div className="flex items-center gap-2">
-            <label className="font-label-sm text-label-sm text-on-surface-variant/50 whitespace-nowrap">Results</label>
-            <select
-              value={topK}
-              onChange={(e) => setTopK(Number(e.target.value))}
-              className="bg-surface-container border border-outline-variant/40 rounded-lg px-2.5 py-1.5 font-label-sm text-label-sm text-on-surface outline-none focus:ring-1 focus:ring-primary/40"
-            >
-              <option value={10}>10</option>
-              <option value={20}>20</option>
-              <option value={30}>30</option>
-              <option value={50}>50</option>
-            </select>
-            {disabled && (
-              <span className="font-body-sm text-body-sm text-on-surface-variant/40">Need at least a photo or description</span>
-            )}
-          </div>
-        </div>
+      <div className="w-full max-w-xl">
+        {inputCard}
       </div>
-
-      {error && (
-        <div className="bg-error-container/80 text-on-error-container rounded-xl px-4 py-3 font-body-md text-body-md border border-error/10">
-          {error}
-        </div>
-      )}
-
-      {results.length > 0 && (
-        <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-          <div className="flex items-center justify-between mb-stack-md">
-            <h3 className="font-headline-sm text-headline-sm text-on-surface">Recommendations</h3>
-            <span className="font-label-md text-label-md text-on-surface-variant/60 bg-surface-container px-3 py-1 rounded-full">{results.length} results</span>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-stack-md">
-            {visible.map((product) => (
-              <ProductCard key={product.id} product={product} onClick={setSelectedProduct} />
-            ))}
-          </div>
-          <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
-        </div>
-      )}
 
       {selectedProduct && (
         <DetailModal product={selectedProduct} onClose={() => setSelectedProduct(null)} />
       )}
-    </>
+    </div>
   )
 }
