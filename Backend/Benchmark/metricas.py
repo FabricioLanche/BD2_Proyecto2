@@ -1,10 +1,7 @@
 import time
-import psutil
-import os
 import csv
 import psycopg2
 import random
-import shutil
 from collections import defaultdict
 from pathlib import Path
 
@@ -15,7 +12,14 @@ import matplotlib.pyplot as plt
 TAMAÑOS = [10000, 20000, 30000, 40000]
 TOP_K = 100
 QUERIES_TEXTO = ["blue shirt", "black shoes", "red dress", "summer hat", "casual jeans"]
-DB_CONFIG = {"host": "localhost", "port": "5433", "database": "multimodal", "user": "postgres", "password": "123456"}
+
+DB_CONFIG = {
+    "host": "localhost", 
+    "port": "5433", 
+    "database": "multimodal", 
+    "user": "postgres", 
+    "password": "123456"
+    }
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 IMAGES_DIR = BASE_DIR / "Multimodal" / "Data" / "test_metrics_images"
@@ -41,10 +45,14 @@ def preparar_entorno(tamano, db_config):
         
         with open(archivo_pkl, "rb") as f:
             dimension_real = len(pickle.load(f))
+        texto_codebook_path = carpeta_respaldo / f"text_codebook_{tamano}.pkl"
+        with open(texto_codebook_path, "rb") as f:
+            texto_dim = len(pickle.load(f))
             
         print(f"  Recreando tabla PostgreSQL con dimensión {dimension_real}...")
         pm = PersistenceManager(n_documents=tamano, **db_config)
         pm.create_tables(histogram_dim=dimension_real)
+        pm.add_text_histogram_column(texto_dim)
         
         print("  Inyectando datos del CSV a PostgreSQL...")
         filas = pm.load_csv(str(archivo_csv))
@@ -64,12 +72,6 @@ def preparar_entorno(tamano, db_config):
         except subprocess.CalledProcessError:
             print(f"\nERROR: Falló la construcción offline para el tamaño {tamano}.")
             return False
-
-def medir_memoria_e_io():
-    proceso = psutil.Process(os.getpid())
-    mem = proceso.memory_info().rss / (1024 * 1024)
-    io = proceso.io_counters().read_count 
-    return mem, io
 
 def medir_disco(tamano):
     data_dir = BASE_DIR / "Multimodal" / "Data" / str(tamano)
@@ -97,6 +99,8 @@ def medir_disco(tamano):
         with conn.cursor() as cur:
             cur.execute("SELECT pg_relation_size('idx_descriptors_texto_vector_gin')")
             pg_gin = cur.fetchone()[0]
+            cur.execute("SELECT pg_relation_size('idx_descriptors_texto_vector_gist')")
+            pg_gist = cur.fetchone()[0]
             cur.execute("""
                 SELECT COALESCE(pg_relation_size(c.reltoastrelid), 0)
                 FROM pg_class c WHERE c.relname = 'descriptors'
@@ -104,24 +108,34 @@ def medir_disco(tamano):
             pg_toast = cur.fetchone()[0]
             cur.execute("SELECT pg_relation_size('idx_descriptors_image_histogram_ivfflat')")
             pg_ivfflat = cur.fetchone()[0]
+            cur.execute("SELECT pg_relation_size('idx_descriptors_image_histogram_hnsw')")
+            pg_hnsw = cur.fetchone()[0]
+            cur.execute("SELECT pg_relation_size('idx_descriptors_text_histogram_hnsw')")
+            pg_text_hnsw = cur.fetchone()[0]
+            cur.execute("SELECT pg_relation_size('idx_descriptors_text_histogram_ivfflat')")
+            pg_text_ivfflat = cur.fetchone()[0]
         conn.close()
     except Exception:
-        pg_gin = pg_toast = pg_ivfflat = 0
+        pg_gin = pg_gist = pg_toast = pg_ivfflat = pg_hnsw = pg_text_hnsw = pg_text_ivfflat = 0
 
     codebook_bytes = (data_dir / f"visual_codebook_{tamano}.pkl").stat().st_size
 
     return {
         "tamano": tamano,
         "spimi_texto_mb": round(spimi_texto_bytes / (1024 * 1024), 2),
-        "postgre_texto_mb": round((pg_gin + pg_toast) / (1024 * 1024), 2),
+        "postgre_texto_mb": round((pg_gin + pg_gist + pg_text_hnsw + pg_text_ivfflat + pg_toast) / (1024 * 1024), 2),
         "spimi_imagen_mb": round(spimi_imagen_bytes / (1024 * 1024), 2),
-        "postgre_imagen_mb": round((pg_ivfflat + codebook_bytes) / (1024 * 1024), 2),
+        "postgre_imagen_mb": round((pg_ivfflat + pg_hnsw + codebook_bytes) / (1024 * 1024), 2),
     }
 
-def calcular_recall(res_custom, res_pg):
-    set_esperado = set(res_pg)
-    set_obtenido = set([r["doc_id"] for r in res_custom])
-    if not set_esperado: return 0.0
+def calcular_recall(res_obtenido, res_esperado):
+    set_esperado = set(res_esperado)
+    if res_obtenido and isinstance(res_obtenido[0], dict):
+        set_obtenido = set(r["doc_id"] for r in res_obtenido)
+    else:
+        set_obtenido = set(res_obtenido)
+    if not set_esperado:
+        return 0.0
     return len(set_esperado.intersection(set_obtenido)) / len(set_esperado)
 
 
@@ -173,6 +187,109 @@ def busqueda_nativa_imagen(conn, orquestador, ruta_imagen):
         return [row[0] for row in cur.fetchall()], io_blocks
 
 
+def busqueda_gist_texto(conn, texto):
+    query_explicar = """
+        EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) 
+        SELECT doc_id FROM descriptors 
+        WHERE texto_vector @@ plainto_tsquery('english', %s) 
+        ORDER BY ts_rank(texto_vector, plainto_tsquery('english', %s)) DESC 
+        LIMIT 100;
+    """
+    with conn.cursor() as cur:
+        cur.execute(query_explicar, (texto, texto))
+        explicacion = cur.fetchone()[0][0]
+        io_blocks = explicacion.get("Plan", {}).get("Shared Read Blocks", 0)
+
+    query_real = """
+        SELECT doc_id FROM descriptors 
+        WHERE texto_vector @@ plainto_tsquery('english', %s) 
+        ORDER BY ts_rank(texto_vector, plainto_tsquery('english', %s)) DESC 
+        LIMIT 100;
+    """
+    with conn.cursor() as cur:
+        cur.execute(query_real, (texto, texto))
+        return [row[0] for row in cur.fetchall()], io_blocks
+
+
+def busqueda_hnsw_imagen(conn, orquestador, ruta_imagen):
+    vector = orquestador._image_histogram(str(ruta_imagen))
+    vector_string = f"[{','.join(map(str, vector))}]"
+
+    query_explicar = """
+        EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) 
+        SELECT doc_id FROM descriptors 
+        ORDER BY image_histogram <=> %s::vector 
+        LIMIT 100;
+    """
+    with conn.cursor() as cur:
+        cur.execute(query_explicar, (vector_string,))
+        explicacion = cur.fetchone()[0][0]
+        io_blocks = explicacion.get("Plan", {}).get("Shared Read Blocks", 0)
+
+    query_real = """
+        SELECT doc_id FROM descriptors 
+        ORDER BY image_histogram <=> %s::vector 
+        LIMIT 100;
+    """
+    with conn.cursor() as cur:
+        cur.execute(query_real, (vector_string,))
+        return [row[0] for row in cur.fetchall()], io_blocks
+
+
+def busqueda_lineal_texto(conn, orquestador, texto):
+    histogram = orquestador._text_histogram(texto)
+    vector_string = f"[{','.join(map(str, histogram))}]"
+
+    old_autocommit = conn.autocommit
+    conn.autocommit = False
+    cur = conn.cursor()
+    try:
+        cur.execute("SET LOCAL enable_indexscan = OFF;")
+        cur.execute("SET LOCAL enable_indexonlyscan = OFF;")
+        cur.execute("SET LOCAL enable_bitmapscan = OFF;")
+        cur.execute("""
+            SELECT doc_id FROM descriptors
+            WHERE text_histogram IS NOT NULL
+            ORDER BY text_histogram <=> %s::vector
+            LIMIT 100;
+        """, (vector_string,))
+        results = [row[0] for row in cur.fetchall()]
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.autocommit = old_autocommit
+    return results
+
+
+def busqueda_lineal_imagen(conn, orquestador, ruta_imagen):
+    vector = orquestador._image_histogram(str(ruta_imagen))
+    vector_string = f"[{','.join(map(str, vector))}]"
+
+    old_autocommit = conn.autocommit
+    conn.autocommit = False
+    cur = conn.cursor()
+    try:
+        cur.execute("SET LOCAL enable_indexscan = OFF;")
+        cur.execute("SET LOCAL enable_indexonlyscan = OFF;")
+        cur.execute("SET LOCAL enable_bitmapscan = OFF;")
+        cur.execute("""
+            SELECT doc_id FROM descriptors
+            WHERE image_histogram IS NOT NULL
+            ORDER BY image_histogram <=> %s::vector
+            LIMIT 100;
+        """, (vector_string,))
+        results = [row[0] for row in cur.fetchall()]
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.autocommit = old_autocommit
+    return results
+
+
 def ejecutar_benchmark():
     from Backend.Multimodal.Online.Orquestador import OnlineOrchestrator
 
@@ -190,35 +307,49 @@ def ejecutar_benchmark():
         
         print(f"\nEvaluando Textos (Tamaño {tamano})")
         for q in QUERIES_TEXTO:
-            io_antes = medir_memoria_e_io()[1]
+            res_lineal = busqueda_lineal_texto(conn, orquestador, q)
+
+            orquestador.reset_io_counters()
             ini = time.perf_counter()
             res_custom = orquestador.search_text(q, k=TOP_K)
             lat_custom = time.perf_counter() - ini
-            io_spimi = medir_memoria_e_io()[1] - io_antes
-            
+            io_spimi = orquestador.io_metrics()["disk_reads"]
+
             ini = time.perf_counter()
             res_pg, io_pg = busqueda_nativa_texto(conn, q)
             lat_pg = time.perf_counter() - ini
 
-            resultados.append({"tamano": tamano, "tipo": "Texto", "query": q, "motor": "Custom_SPIMI", "latencia": lat_custom, "throughput_qps": 1.0 / lat_custom if lat_custom > 0 else 0.0, "io": io_spimi, "recall": calcular_recall(res_custom, res_pg)})
-            resultados.append({"tamano": tamano, "tipo": "Texto", "query": q, "motor": "Postgres_GIN", "latencia": lat_pg, "throughput_qps": 1.0 / lat_pg if lat_pg > 0 else 0.0, "io": io_pg, "recall": 1.0})
+            ini = time.perf_counter()
+            res_gist, io_gist = busqueda_gist_texto(conn, q)
+            lat_gist = time.perf_counter() - ini
+
+            resultados.append({"tamano": tamano, "tipo": "Texto", "query": q, "motor": "Custom_SPIMI", "latencia": lat_custom, "throughput_qps": 1.0 / lat_custom if lat_custom > 0 else 0.0, "io": io_spimi, "recall": calcular_recall(res_custom, res_lineal)})
+            resultados.append({"tamano": tamano, "tipo": "Texto", "query": q, "motor": "Postgres_GIN", "latencia": lat_pg, "throughput_qps": 1.0 / lat_pg if lat_pg > 0 else 0.0, "io": io_pg, "recall": calcular_recall(res_pg, res_lineal)})
+            resultados.append({"tamano": tamano, "tipo": "Texto", "query": q, "motor": "Postgres_GiST", "latencia": lat_gist, "throughput_qps": 1.0 / lat_gist if lat_gist > 0 else 0.0, "io": io_gist, "recall": calcular_recall(res_gist, res_lineal)})
 
         print(f"\nEvaluando Imágenes (Tamaño {tamano})")
         for ruta_img in QUERY_IMAGENES:
             nombre_archivo = ruta_img.name
-            
-            io_antes = medir_memoria_e_io()[1]
+
+            res_lineal = busqueda_lineal_imagen(conn, orquestador, ruta_img)
+
+            orquestador.reset_io_counters()
             ini = time.perf_counter()
             res_custom = orquestador.search_image(str(ruta_img), k=TOP_K)
             lat_custom = time.perf_counter() - ini
-            io_spimi = medir_memoria_e_io()[1] - io_antes
-            
+            io_spimi = orquestador.io_metrics()["disk_reads"]
+
             ini = time.perf_counter()
             res_pg, io_pg = busqueda_nativa_imagen(conn, orquestador, ruta_img)
             lat_pg = time.perf_counter() - ini
 
-            resultados.append({"tamano": tamano, "tipo": "Imagen", "query": "IMG_" + nombre_archivo, "motor": "Custom_SPIMI", "latencia": lat_custom, "throughput_qps": 1.0 / lat_custom if lat_custom > 0 else 0.0, "io": io_spimi, "recall": calcular_recall(res_custom, res_pg)})
-            resultados.append({"tamano": tamano, "tipo": "Imagen", "query": "IMG_" + nombre_archivo, "motor": "Postgres_pgvector", "latencia": lat_pg, "throughput_qps": 1.0 / lat_pg if lat_pg > 0 else 0.0, "io": io_pg, "recall": 1.0})
+            ini = time.perf_counter()
+            res_hnsw, io_hnsw = busqueda_hnsw_imagen(conn, orquestador, ruta_img)
+            lat_hnsw = time.perf_counter() - ini
+
+            resultados.append({"tamano": tamano, "tipo": "Imagen", "query": "IMG_" + nombre_archivo, "motor": "Custom_SPIMI", "latencia": lat_custom, "throughput_qps": 1.0 / lat_custom if lat_custom > 0 else 0.0, "io": io_spimi, "recall": calcular_recall(res_custom, res_lineal)})
+            resultados.append({"tamano": tamano, "tipo": "Imagen", "query": "IMG_" + nombre_archivo, "motor": "Postgres_pgvector", "latencia": lat_pg, "throughput_qps": 1.0 / lat_pg if lat_pg > 0 else 0.0, "io": io_pg, "recall": calcular_recall(res_pg, res_lineal)})
+            resultados.append({"tamano": tamano, "tipo": "Imagen", "query": "IMG_" + nombre_archivo, "motor": "Postgres_HNSW", "latencia": lat_hnsw, "throughput_qps": 1.0 / lat_hnsw if lat_hnsw > 0 else 0.0, "io": io_hnsw, "recall": calcular_recall(res_hnsw, res_lineal)})
 
         orquestador.close()
 
@@ -264,14 +395,16 @@ def generar_graficos(resultados):
         ("Custom_SPIMI", "Texto", "SPIMI Texto", "o-", "tab:blue"),
         ("Custom_SPIMI", "Imagen", "SPIMI Imagen", "s-", "tab:orange"),
         ("Postgres_GIN", "Texto", "PostgreSQL Texto", "o--", "tab:green"),
+        ("Postgres_GiST", "Texto", "PostgreSQL GiST", "^--", "tab:purple"),
         ("Postgres_pgvector", "Imagen", "PostgreSQL Imagen", "s--", "tab:red"),
+        ("Postgres_HNSW", "Imagen", "PostgreSQL HNSW", "D--", "tab:brown"),
     ]
 
     graficos = [
-        ("latencia", "Latencia (s)", "Comparativa de Latencia al escalar la BD", ["SPIMI Texto", "SPIMI Imagen", "PostgreSQL Texto", "PostgreSQL Imagen"]),
-        ("throughput_qps", "QPS", "Throughput (Consultas por segundo)", ["SPIMI Texto", "SPIMI Imagen", "PostgreSQL Texto", "PostgreSQL Imagen"]),
-        ("io", "Bloques I/O", "Bloques Leídos del Disco (Accesos I/O)", ["SPIMI Texto", "SPIMI Imagen", "PostgreSQL Texto", "PostgreSQL Imagen"]),
-        ("recall", "Recall", "Precisión de Recuperación vs PostgreSQL", ["SPIMI Texto", "SPIMI Imagen"]),
+        ("latencia", "Latencia (s)", "Comparativa de Latencia al escalar la BD", ["SPIMI Texto", "SPIMI Imagen", "PostgreSQL Texto", "PostgreSQL GiST", "PostgreSQL Imagen", "PostgreSQL HNSW"]),
+        ("throughput_qps", "QPS", "Throughput (Consultas por segundo)", ["SPIMI Texto", "SPIMI Imagen", "PostgreSQL Texto", "PostgreSQL GiST", "PostgreSQL Imagen", "PostgreSQL HNSW"]),
+        ("io", "Bloques I/O", "Bloques Leídos del Disco (Accesos I/O)", ["SPIMI Texto", "SPIMI Imagen", "PostgreSQL Texto", "PostgreSQL GiST", "PostgreSQL Imagen", "PostgreSQL HNSW"]),
+        ("recall", "Recall", "Precisión de Recuperación vs Búsqueda Lineal", ["SPIMI Texto", "SPIMI Imagen", "PostgreSQL Texto", "PostgreSQL GiST", "PostgreSQL Imagen", "PostgreSQL HNSW"]),
     ]
 
     for metrica, ylabel, titulo, incluir in graficos:

@@ -5,7 +5,7 @@ import numpy as np
 
 class TextCodebookTransform:
 
-    persist_histogram = False
+    persist_histogram = True
 
     def __init__(self, codebook: List[int]):
         self.codebook = codebook

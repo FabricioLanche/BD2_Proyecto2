@@ -266,17 +266,13 @@ def parallel_transform_stage(
     label: str = "",
     persist: bool = True,
 ) -> Tuple[List[Tuple[int, np.ndarray]], List[Tuple[int, int]]]:
-    """Stage genérico de transformación en paralelo (pasada 2).
-
-    Distribuye la transformación features→histograma entre procesos hijo.
-    Retorna (histograms, all_tokens) para construir índices.
-    """
     items = [(doc_id, features, codebook, transform_class)
              for doc_id, features in stream]
     n = len(items)
     if n == 0:
         return [], []
 
+    is_text = transform_class == TextCodebookTransform
     histograms: List[Tuple[int, np.ndarray]] = []
     all_tokens: List[Tuple[int, int]] = []
 
@@ -287,7 +283,10 @@ def parallel_transform_stage(
                            desc=label, unit="doc"):
             doc_id, histogram, tokens = future.result()
             if persist:
-                persister.insert_histogram(doc_id, histogram)
+                if is_text:
+                    persister.insert_text_histogram(doc_id, histogram)
+                else:
+                    persister.insert_image_histogram(doc_id, histogram)
             histograms.append((doc_id, histogram))
             all_tokens.extend(tokens)
 
@@ -299,16 +298,13 @@ def codebook_transform_and_persist_stage(
     transform: Union[TextCodebookTransform, VisualCodebookTransform],
     persister: PersistenceManager,
 ) -> Iterator[Tuple[int, np.ndarray]]:
-    """
-    Transforma features a histogramas y persiste si el transform lo requiere.
-
-    Solo VisualCodebookTransform tiene persist_histogram = True
-    (persiste image_histogram vía persister.insert_histogram).
-    """
     for doc_id, features_list in stream:
         histogram = transform.transform(features_list, doc_id)
         if getattr(transform, 'persist_histogram', False):
-            persister.insert_histogram(doc_id, histogram)
+            if isinstance(transform, TextCodebookTransform):
+                persister.insert_text_histogram(doc_id, histogram)
+            else:
+                persister.insert_image_histogram(doc_id, histogram)
         yield doc_id, histogram
 
 
@@ -424,13 +420,15 @@ def main() -> None:
         len(visual_codebook), len(text_codebook),
     )
 
+    persister.add_text_histogram_column(len(text_codebook))
+
     # ── Pasada 2: Texto ──────────────────────────────────────
     logger.info("=== Pasada 2: Texto ===")
     if parallel:
         _, text_tokens = parallel_transform_stage(
             iter(text_features), text_codebook, TextCodebookTransform,
             persister, max_workers=args.processes,
-            label="  Texto", persist=False,
+            label="  Texto",
         )
     else:
         text_transform = TextCodebookTransform(text_codebook)

@@ -8,7 +8,14 @@ logger = logging.getLogger(__name__)
 
 class PersistenceManager:
 
-    def __init__(self, n_documents: int, host=None, port=None, database=None, user=None, password=None):
+    def __init__(
+        self, n_documents: int, 
+        host=os.getenv("DB_HOST", "localhost"),
+        port=os.getenv("DB_PORT", "5433"),
+        database=os.getenv("DB_NAME", "multimodal"),
+        user=os.getenv("DB_USER", "postgres"),
+        password=os.getenv("DB_PASSWORD", "123456")
+    ):
         import os
         self.n_documents = n_documents
         base = Path(__file__).resolve().parent.parent / "Data"
@@ -16,15 +23,13 @@ class PersistenceManager:
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
         self.connection = psycopg2.connect(
-            host=host or os.getenv("DB_HOST", "localhost"),
-            port=port or os.getenv("DB_PORT", "5433"),
-            database=database or os.getenv("DB_NAME", "multimodal"),
-            user=user or os.getenv("DB_USER", "postgres"),
-            password=password or os.getenv("DB_PASSWORD", "123456"),
+            host=host,
+            port=port,
+            database=database,
+            user=user,
+            password=password,
         )
 
-        # la extension debe existir ANTES de register_vector (si no, falla con
-        # 'vector type not found in the database')
         with self.connection.cursor() as cursor:
             cursor.execute("CREATE EXTENSION IF NOT EXISTS vector;")
         self.connection.commit()
@@ -35,9 +40,6 @@ class PersistenceManager:
         return self.connection.cursor()
     
     def create_tables(self, histogram_dim: int = 512):
-        # histogram_dim = k del codebook visual; el orquestador lo pasa
-        # tras construir el codebook para que la columna calce con el histograma.
-
         with self._get_cursor() as cursor:
             try:
 
@@ -79,6 +81,26 @@ class PersistenceManager:
                 self.connection.rollback()
                 logger.error(f"Error creando tablas: {e}")
                 raise
+
+    def add_text_histogram_column(self, dim: int) -> None:
+        with self._get_cursor() as cursor:
+            try:
+                cursor.execute(f"""
+                    ALTER TABLE descriptors
+                    ADD COLUMN IF NOT EXISTS text_histogram VECTOR({int(dim)});
+                CREATE INDEX IF NOT EXISTS idx_descriptors_text_histogram_hnsw
+                ON descriptors
+                USING hnsw (text_histogram vector_l2_ops);
+                CREATE INDEX IF NOT EXISTS idx_descriptors_text_histogram_ivfflat
+                ON descriptors
+                USING ivfflat (text_histogram vector_l2_ops)
+                WITH (lists = 100);
+                """)
+                self.connection.commit()
+            except Exception as e:
+                self.connection.rollback()
+                logger.error(f"Error adding text_histogram column: {e}")
+                raise
             
     def insert_document(self, doc_id: int, url: str, texto: str) -> None:
         with self._get_cursor() as cursor:
@@ -112,7 +134,7 @@ class PersistenceManager:
                 logger.error(f"Error en batch_insert_documents: {e}")
                 raise
 
-    def insert_histogram(self, doc_id: int, histogram) -> None:
+    def insert_image_histogram(self, doc_id: int, histogram) -> None:
         with self._get_cursor() as cursor:
             try:
                 cursor.execute("""
@@ -122,7 +144,20 @@ class PersistenceManager:
                 self.connection.commit()
             except Exception as e:
                 self.connection.rollback()
-                logger.error(f"Error en insert_histogram doc_id={doc_id}: {e}")
+                logger.error(f"Error en insert_image_histogram doc_id={doc_id}: {e}")
+                raise
+
+    def insert_text_histogram(self, doc_id: int, histogram) -> None:
+        with self._get_cursor() as cursor:
+            try:
+                cursor.execute("""
+                    UPDATE descriptors SET text_histogram = %s::vector
+                    WHERE doc_id = %s;
+                """, (histogram.tolist(), int(doc_id)))
+                self.connection.commit()
+            except Exception as e:
+                self.connection.rollback()
+                logger.error(f"Error en insert_text_histogram doc_id={doc_id}: {e}")
                 raise
 
     def dump_csv(self) -> str:
