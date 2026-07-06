@@ -18,6 +18,7 @@ export default function RecommendationEngine() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [topK, setTopK] = useState(10)
+  const [searched, setSearched] = useState(false)
 
   const totalPages = Math.max(1, Math.ceil(results.length / PER_PAGE))
 
@@ -34,6 +35,7 @@ export default function RecommendationEngine() {
     setResults([])
     setError(null)
     setPage(1)
+    setSearched(false)
   }
 
   const handleSearch = async () => {
@@ -42,6 +44,7 @@ export default function RecommendationEngine() {
     setError(null)
     setPage(1)
     setLoading(true)
+    setSearched(false)
     try {
       const data = await multimodalSearch(
         imageFile,
@@ -54,6 +57,7 @@ export default function RecommendationEngine() {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Search failed')
     } finally {
+      setSearched(true)
       setLoading(false)
     }
   }
@@ -258,6 +262,12 @@ export default function RecommendationEngine() {
 
       <div className="w-full max-w-xl">
         {inputCard}
+
+        {searched && results.length === 0 && !loading && !error && (
+          <div className="bg-surface-container/60 text-on-surface-variant rounded-xl px-5 py-4 font-body-md text-body-md border border-outline-variant/20 mt-4 text-center">
+            No matching products found for the given criteria.
+          </div>
+        )}
       </div>
 
       {selectedProduct && (

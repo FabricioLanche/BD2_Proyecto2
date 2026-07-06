@@ -15,6 +15,7 @@ export default function VisualSearch() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [topK, setTopK] = useState(10)
+  const [searched, setSearched] = useState(false)
 
   const totalPages = Math.max(1, Math.ceil(results.length / PER_PAGE))
 
@@ -24,6 +25,7 @@ export default function VisualSearch() {
     setResults([])
     setError(null)
     setPage(1)
+    setSearched(false)
   }
 
   const handleSearch = async () => {
@@ -32,12 +34,14 @@ export default function VisualSearch() {
     setError(null)
     setPage(1)
     setLoading(true)
+    setSearched(false)
     try {
       const data = await visualSearch(imageFile, topK)
       setResults(data)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Search failed')
     } finally {
+      setSearched(true)
       setLoading(false)
     }
   }
@@ -205,6 +209,12 @@ export default function VisualSearch() {
 
       <div className="w-full max-w-xl">
         {inputCard}
+
+        {searched && results.length === 0 && !loading && !error && (
+          <div className="bg-surface-container/60 text-on-surface-variant rounded-xl px-5 py-4 font-body-md text-body-md border border-outline-variant/20 mt-4 text-center">
+            No matching products found for the uploaded image.
+          </div>
+        )}
       </div>
 
       {selectedProduct && (
