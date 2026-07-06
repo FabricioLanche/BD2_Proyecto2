@@ -1,5 +1,6 @@
 import math
 import os
+import pickle
 import tempfile
 import shutil
 from sys import getsizeof
@@ -8,7 +9,6 @@ from tqdm import tqdm
 
 from ..Utils.BPlusTree import BPlusTree
 from ..Utils.BufferManager import BufferManager
-from ..Utils.ExtendibleHashing import IDFHash, DocNormHash
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'Data')
 
@@ -165,21 +165,7 @@ class InverseIndex:
         btree: BPlusTree, N: int, prefix: str,
         buffer_manager: BufferManager,
     ) -> None:
-        file_ids = {'text': (4, 5, 6, 7), 'image': (8, 9, 10, 11)}
-        idf_bfid, idf_vfid, norm_bfid, norm_vfid = file_ids[prefix]
-
-        idf_hash = IDFHash(
-            os.path.join(DATA_DIR, f'{prefix}_word_idf_{N}.hash'),
-            bucket_file_id=idf_bfid,
-            value_file_id=idf_vfid,
-            buffer_manager=buffer_manager,
-        )
-        norm_hash = DocNormHash(
-            os.path.join(DATA_DIR, f'{prefix}_doc_norm_{N}.hash'),
-            bucket_file_id=norm_bfid,
-            value_file_id=norm_vfid,
-            buffer_manager=buffer_manager,
-        )
+        idf_dict: dict[int, float] = {}
 
         total_postings = sum(len(pl) for _, pl in btree.scan())
 
@@ -189,7 +175,7 @@ class InverseIndex:
         for word_id, posting_list in btree.scan():
             df = len(posting_list)
             idf = math.log(N / df) if df > 0 else 0.0
-            idf_hash.put(word_id, idf)
+            idf_dict[word_id] = idf
 
             for posting in posting_list:
                 doc_id = posting.DOC_ID
@@ -199,14 +185,15 @@ class InverseIndex:
                 pbar.update(1)
         pbar.close()
 
-        pbar2 = tqdm(total=len(doc_norm_sq), desc=f"  DocNorm {prefix}", unit="doc")
-        for doc_id, sq in doc_norm_sq.items():
-            norm_hash.put(doc_id, math.sqrt(sq))
-            pbar2.update(1)
-        pbar2.close()
+        doc_norm_dict: dict[int, float] = {
+            doc_id: math.sqrt(sq)
+            for doc_id, sq in doc_norm_sq.items()
+        }
 
-        idf_hash.close()
-        norm_hash.close()
+        with open(os.path.join(DATA_DIR, f'{prefix}_word_idf_{N}.pkl'), 'wb') as f:
+            pickle.dump(idf_dict, f)
+        with open(os.path.join(DATA_DIR, f'{prefix}_doc_norm_{N}.pkl'), 'wb') as f:
+            pickle.dump(doc_norm_dict, f)
 
     def build_text_index(
         self,

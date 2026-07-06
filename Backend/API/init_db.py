@@ -29,6 +29,15 @@ def histogram_dim_from_codebook() -> int:
         centers = pickle.load(f)
     return centers.shape[0]
 
+def histogram_dim_from_csv() -> int:
+    with open(CSV_PATH, "r") as f:
+        f.readline()
+        line = f.readline()
+    start = line.index("[")
+    end = line.index("]")
+    vec_str = line[start+1:end]
+    return len(vec_str.split(","))
+
 
 def table_exists(cursor) -> bool:
     cursor.execute(
@@ -124,7 +133,11 @@ def main() -> None:
                 conn.close()
                 return
             logger.info("Table 'descriptors' exists but is empty — dropping and recreating.")
-        dim = histogram_dim_from_codebook()
+        if VCODEBOOK_PATH.is_file():
+            dim = histogram_dim_from_codebook()
+        else:
+            dim = histogram_dim_from_csv()
+            logger.info("Codebook not found, read dim=%d from CSV.", dim)
         create_table(cur, dim)
         needs_load = True
 

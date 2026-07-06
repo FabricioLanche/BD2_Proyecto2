@@ -8,18 +8,19 @@ logger = logging.getLogger(__name__)
 
 class PersistenceManager:
 
-    def __init__(self, n_documents: int, host="localhost", port="5433", database="multimodal", user="postgres", password="123456"):
+    def __init__(self, n_documents: int, host=None, port=None, database=None, user=None, password=None):
+        import os
         self.n_documents = n_documents
         base = Path(__file__).resolve().parent.parent / "Data"
         self.data_dir = base / str(n_documents) if n_documents is not None else base
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
         self.connection = psycopg2.connect(
-            host=host,
-            port=port,
-            database=database,
-            user=user,
-            password=password
+            host=host or os.getenv("DB_HOST", "localhost"),
+            port=port or os.getenv("DB_PORT", "5433"),
+            database=database or os.getenv("DB_NAME", "multimodal"),
+            user=user or os.getenv("DB_USER", "postgres"),
+            password=password or os.getenv("DB_PASSWORD", "123456"),
         )
 
         # la extension debe existir ANTES de register_vector (si no, falla con

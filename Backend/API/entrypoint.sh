@@ -10,7 +10,7 @@ if [ ! -d "$DATA_DIR" ] || [ -z "$(ls -A "$DATA_DIR" 2>/dev/null)" ]; then
     echo " Running offline pipeline for"
     echo " $DATASET_SIZE documents..."
     echo "========================================"
-    python -m Backend.Multimodal.Offline.Orquestador2 \
+    python -m Backend.Multimodal.Offline.Orquestador \
         --dataset-size "$DATASET_SIZE"
     echo "========================================"
     echo " Offline pipeline completed."

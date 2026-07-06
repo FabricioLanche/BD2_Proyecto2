@@ -28,7 +28,7 @@ services:
       DB_NAME: multimodal
       DB_USER: postgres
       DB_PASSWORD: 123456
-      DATASET_SIZE: "1000"
+      DATASET_SIZE: "10000"
     ports:
       - "8000:8000"
     volumes:

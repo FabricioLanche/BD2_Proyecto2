@@ -1,6 +1,7 @@
 import heapq
 import math
 import os
+import pickle
 import time
 
 import numpy as np
@@ -8,7 +9,6 @@ import numpy as np
 from ..Offline.InverseIndex import DATA_DIR
 from ..Utils.BPlusTree import BPlusTree
 from ..Utils.BufferManager import BufferManager
-from ..Utils.ExtendibleHashing import IDFHash, DocNormHash
 
 
 class Search:
@@ -18,10 +18,10 @@ class Search:
         self._data_dir = os.path.join(DATA_DIR, str(n_documents))
         self._text_btree: BPlusTree | None = None
         self._image_btree: BPlusTree | None = None
-        self._text_word_idf: IDFHash | None = None
-        self._image_word_idf: IDFHash | None = None
-        self._text_doc_norm: DocNormHash | None = None
-        self._image_doc_norm: DocNormHash | None = None
+        self._text_word_idf: dict[int, float] | None = None
+        self._image_word_idf: dict[int, float] | None = None
+        self._text_doc_norm: dict[int, float] | None = None
+        self._image_doc_norm: dict[int, float] | None = None
         self._query_time: float = 0.0
 
     # ── I/O metrics (delega al BufferManager) ──────────────────
@@ -37,18 +37,17 @@ class Search:
 
     # ── Lazy load ──────────────────────────────────────────────
 
-    def _lazy_load(self, prefix: str) -> tuple[BPlusTree, IDFHash, DocNormHash]:
+    def _lazy_load(self, prefix: str) -> tuple[BPlusTree, dict[int, float], dict[int, float]]:
         btree_attr = f'_{prefix}_btree'
         word_idf_attr = f'_{prefix}_word_idf'
         doc_norm_attr = f'_{prefix}_doc_norm'
 
         if getattr(self, btree_attr) is None:
-            # (btree_fid, heap_fid, idf_bfid, idf_vfid, norm_bfid, norm_vfid)
             fids = {
-                'text':  (0, 1, 4, 5, 6, 7),
-                'image': (2, 3, 8, 9, 10, 11),
+                'text':  (0, 1),
+                'image': (2, 3),
             }
-            bf, hf, ib, iv, nb, nv = fids[prefix]
+            bf, hf = fids[prefix]
 
             btree = BPlusTree(
                 os.path.join(self._data_dir, f'{prefix}_index_{self.n_documents}.btree'),
@@ -57,18 +56,10 @@ class Search:
                 heap_file_id=hf,
                 buffer_manager=self.buffer_manager,
             )
-            word_idf = IDFHash(
-                os.path.join(self._data_dir, f'{prefix}_word_idf_{self.n_documents}.hash'),
-                bucket_file_id=ib,
-                value_file_id=iv,
-                buffer_manager=self.buffer_manager,
-            )
-            doc_norm = DocNormHash(
-                os.path.join(self._data_dir, f'{prefix}_doc_norm_{self.n_documents}.hash'),
-                bucket_file_id=nb,
-                value_file_id=nv,
-                buffer_manager=self.buffer_manager,
-            )
+            with open(os.path.join(self._data_dir, f'{prefix}_word_idf_{self.n_documents}.pkl'), 'rb') as f:
+                word_idf = pickle.load(f)
+            with open(os.path.join(self._data_dir, f'{prefix}_doc_norm_{self.n_documents}.pkl'), 'rb') as f:
+                doc_norm = pickle.load(f)
 
             setattr(self, btree_attr, btree)
             setattr(self, word_idf_attr, word_idf)
@@ -86,8 +77,8 @@ class Search:
     def _score(
         histogram: np.ndarray,
         btree: BPlusTree,
-        word_idf: IDFHash,
-        doc_norm: DocNormHash,
+        word_idf: dict[int, float],
+        doc_norm: dict[int, float],
     ) -> dict[int, float]:
         query_weights: dict[int, float] = {}
         query_norm_sq = 0.0
