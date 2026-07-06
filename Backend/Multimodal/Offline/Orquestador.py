@@ -1,24 +1,15 @@
-"""
-Iteradores streaming para el pipeline offline multimodal.
-
-Proveen generadores que leen styles.csv e images.csv línea por línea
-desde Backend/Multimodal/Data/, yields (doc_id, data) una tupla a la vez
-sin cargar el dataset completo.
-"""
-
 import csv
 import logging
 import argparse
-from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Iterator, List, Dict, Optional, Tuple, Union
+from typing import Callable, Iterator, List, Dict, Optional, Tuple, Union
 
 from tqdm import tqdm
 
 import cv2
 import numpy as np
-import requests
+
 
 from . import CodeBook as _cb_module
 from . import FeatureExtractor as _fe_module
@@ -38,21 +29,13 @@ Data = Union[str, np.ndarray]
 Chunk = Union[str, np.ndarray]
 ChunkList = List[Tuple[int, Chunk]]
 
-TEXT_COLUMNS = [
-    "gender", "masterCategory", "subCategory", "articleType",
-    "baseColour", "season", "year", "usage", "productDisplayName",
-]
-
 
 def get_text_data(
     dataset_size: Optional[int] = None,
 ) -> Iterator[Tuple[int, str]]:
     """
     Lee Data/styles.csv línea por línea usando csv.DictReader.
-
-    Por cada fila:
-      - Concatena las columnas textuales disponibles con '|'
-      - Yield (doc_id, texto_concatenado)
+    El CSV debe tener columnas: id, texto (texto pre-concatenado con |).
     """
     styles_path = DATA_DIR / "styles.csv"
     if not styles_path.exists():
@@ -66,13 +49,7 @@ def get_text_data(
                 break
 
             doc_id = int(row.get("id", count))
-
-            parts: list[str] = []
-            for col in TEXT_COLUMNS:
-                val = row.get(col, "")
-                parts.append(val if val else "")
-
-            texto = "|".join(parts)
+            texto = row.get("texto", "")
 
             yield doc_id, texto
             count += 1
@@ -82,19 +59,10 @@ def get_text_data(
 
 def get_image_data(
     dataset_size: Optional[int] = None,
-    timeout: int = 10,
 ) -> Iterator[Tuple[int, str, np.ndarray]]:
     """
     Lee Data/images.csv línea por línea usando csv.DictReader.
-
-    Por cada fila:
-      - Extrae doc_id del campo filename (ej. "123.jpg" -> 123)
-      - Extrae url del campo link
-      - Descarga la imagen desde la URL original con requests
-      - Decodifica con OpenCV a np.ndarray (BGR)
-      - Yield (doc_id, url, imagen_array)
-
-    Si falla la descarga o decodificación, salta la imagen (loggea warning).
+    Lee cada imagen desde el sistema de archivos local.
     """
     images_path = DATA_DIR / "images.csv"
     if not images_path.exists():
@@ -108,118 +76,97 @@ def get_image_data(
                 break
 
             filename: str = row.get("filename", "")
-            url: str = row.get("link", "")
+            if not filename:
+                continue
 
-            if not filename or not url:
+            doc_id = int(row.get("id", "0"))
+
+            local_path = DATA_DIR / "images" / Path(filename).name
+            if not local_path.is_file():
                 logger.warning(
-                    "Fila inv\u00e1lida en images.csv: filename=%s, link=%s",
-                    filename, url,
+                    "Imagen local no encontrada doc_id=%d, path=%s",
+                    doc_id, local_path,
                 )
                 continue
 
-            doc_id = int(filename.replace(".jpg", "").replace(".png", ""))
-
-            try:
-                resp = requests.get(url, timeout=timeout)
-                resp.raise_for_status()
-
-                arr = np.frombuffer(resp.content, dtype=np.uint8)
-                img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-
-                if img is None:
-                    logger.warning(
-                        "No se pudo decodificar imagen doc_id=%d, url=%s",
-                        doc_id, url,
-                    )
-                    continue
-
-                yield doc_id, url, img
-                count += 1
-
-            except requests.RequestException as e:
+            img = cv2.imread(str(local_path))
+            if img is None:
                 logger.warning(
-                    "Error descargando imagen doc_id=%d, url=%s: %s",
-                    doc_id, url, e,
+                    "No se pudo decodificar imagen local doc_id=%d, path=%s",
+                    doc_id, local_path,
                 )
                 continue
-            except Exception as e:
-                logger.warning(
-                    "Error procesando imagen doc_id=%d, url=%s: %s",
-                    doc_id, url, e,
-                )
-                continue
+
+            yield doc_id, "", img
+            count += 1
 
     logger.info("get_image_data: %d im\u00e1genes emitidas", count)
 
+DATA_DIR_IMAGES = DATA_DIR / "images"
+
+
+# ── Workers para procesos hijo (pasada 1) ──────────────────────
+
+# get_image_data  → item = (doc_id, "", img)
+# get_text_data   → item = (doc_id, text)
+
 def _image_worker(
-    doc_id_url: Tuple[int, str],
-) -> Optional[Tuple[int, str, List[np.ndarray]]]:
-    """Corre en proceso hijo: descarga + decode + split + SIFT.
-
-    Returns (doc_id, url, [(chunk_id, descriptor), ...]) o None si falla.
-    """
-    doc_id, url = doc_id_url
+    item: Tuple[int, str, np.ndarray],
+) -> Optional[Tuple[int, list]]:
+    """Corre en proceso hijo: split + SIFT sobre imagen ya cargada."""
+    doc_id, _, img = item
     try:
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        arr = np.frombuffer(resp.content, dtype=np.uint8)
-        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        if img is None:
-            return None
-
         splitter = MultimodalSplitter()
         chunks = splitter.split(doc_id, img)
         extractor = ImageFeatureExtractor()
         features = extractor.extract_features(chunks)
-        return doc_id, url, features
+        return doc_id, features
     except Exception as e:
         logger.warning("Error imagen doc_id=%d: %s", doc_id, e)
         return None
 
 
-def parallel_image_pipeline(
-    dataset_size: int,
-    codebook_builder: VisualCodebookBuilder,
-    persister: PersistenceManager,
+def _text_worker(
+    item: Tuple[int, str, int],
+) -> Optional[Tuple[int, list]]:
+    """Corre en proceso hijo: split texto + BOW."""
+    doc_id, text, n_documents = item
+    try:
+        splitter = MultimodalSplitter()
+        chunks = splitter.split(doc_id, text)
+        extractor = TextFeatureExtractor(n_documents=n_documents)
+        features = extractor.extract_features(chunks)
+        return doc_id, features
+    except Exception as e:
+        logger.warning("Error texto doc_id=%d: %s", doc_id, e)
+        return None
+
+
+def parallel_feature_stage(
+    items: List,
+    worker_fn: Callable,
+    codebook_builder: Union[VisualCodebookBuilder, TextCodebookBuilder],
     max_workers: int,
+    label: str = "",
 ) -> Iterator[Tuple[int, list]]:
-    """Reemplaza get_image_data → persist_and_split → extract → codebook_build.
-
-    Download + split + SIFT corren en procesos hijo (ProcessPoolExecutor).
-    Persist + accumulate corren en el proceso principal.
     """
-    images_path = DATA_DIR / "images.csv"
-    if not images_path.exists():
-        raise FileNotFoundError(f"No se encontr\u00f3 {images_path}")
+    Stage genérico de extracción en paralelo.
 
-    items: list[Tuple[int, str]] = []
-    with open(images_path, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        count = 0
-        for row in reader:
-            if dataset_size is not None and count >= dataset_size:
-                break
-            filename = row.get("filename", "")
-            url = row.get("link", "")
-            if not filename or not url:
-                continue
-            doc_id = int(filename.replace(".jpg", "").replace(".png", ""))
-            items.append((doc_id, url))
-            count += 1
-
-    logger.info(
-        "parallel_image_pipeline: %d imagenes con %d procesos",
-        len(items), max_workers,
-    )
+    Distribuye items entre procesos hijo via ProcessPoolExecutor.
+    Cada worker ejecuta split + extracción de features.
+    El proceso principal acumula en el codebook y hace yield.
+    La persistencia debe hacerse antes de llamar a este stage.
+    """
+    if not items:
+        return
 
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_image_worker, it): it for it in items}
+        futures = {executor.submit(worker_fn, it): it for it in items}
         for future in as_completed(futures):
             result = future.result()
             if result is None:
                 continue
-            doc_id, url, features = result
-            persister.insert_document(doc_id, url, "")
+            doc_id, features = result
             codebook_builder.accumulate(features)
             yield doc_id, features
 
@@ -280,48 +227,50 @@ def codebook_build_stage(
         yield doc_id, features
 
 
-def _image_transform_worker(args: Tuple) -> Tuple:
-    """Corre en proceso hijo: transforma descriptores de un doc a histograma.
+def _transform_worker(args: Tuple) -> Tuple:
+    """Corre en proceso hijo: transforma features a histograma.
 
-    args = (doc_id, descriptors_list, visual_codebook_array)
+    args = (doc_id, features_list, codebook, transform_class)
+    transform_class puede ser VisualCodebookTransform o TextCodebookTransform.
     Returns (doc_id, histogram_array, [(doc_id, codeword_id), ...])
     """
-    doc_id, descriptors, codebook = args
-    transform = VisualCodebookTransform(codebook)
-    histogram = transform.transform(descriptors, doc_id)
+    doc_id, features, codebook, transform_class = args
+    transform = transform_class(codebook)
+    histogram = transform.transform(features, doc_id)
     return doc_id, histogram, transform.tokens
 
 
-def parallel_image_transform(
-    features_iter: Iterator[Tuple[int, list]],
-    codebook: np.ndarray,
+def parallel_transform_stage(
+    stream: Iterator[Tuple[int, list]],
+    codebook: Union[np.ndarray, List],
+    transform_class: Union[type],
     persister: PersistenceManager,
     max_workers: int,
+    label: str = "",
+    persist: bool = True,
 ) -> Tuple[List[Tuple[int, np.ndarray]], List[Tuple[int, int]]]:
-    """Pasada 2 de imagen en paralelo.
+    """Stage genérico de transformación en paralelo (pasada 2).
 
-    Transforma descriptores a histogramas con ProcessPoolExecutor.
-    Retorna (list_histograms, all_tokens) para construir índices.
+    Distribuye la transformación features→histograma entre procesos hijo.
+    Retorna (histograms, all_tokens) para construir índices.
     """
-    items = [(doc_id, descs, codebook)
-             for doc_id, descs in features_iter]
+    items = [(doc_id, features, codebook, transform_class)
+             for doc_id, features in stream]
     n = len(items)
-
-    logger.info(
-        "parallel_image_transform: %d docs con %d procesos",
-        n, max_workers,
-    )
+    if n == 0:
+        return [], []
 
     histograms: List[Tuple[int, np.ndarray]] = []
     all_tokens: List[Tuple[int, int]] = []
 
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_image_transform_worker, it): it[0]
+        futures = {executor.submit(_transform_worker, it): it[0]
                    for it in items}
         for future in tqdm(as_completed(futures), total=n,
-                           desc="  Imagen", unit="doc"):
+                           desc=label, unit="doc"):
             doc_id, histogram, tokens = future.result()
-            persister.insert_histogram(doc_id, histogram)
+            if persist:
+                persister.insert_histogram(doc_id, histogram)
             histograms.append((doc_id, histogram))
             all_tokens.extend(tokens)
 
@@ -356,7 +305,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--processes", type=int, default=1,
-        help="Procesos para imágenes (>1 activa parallel_image_pipeline con ProcessPoolExecutor)",
+        help="Procesos en paralelo para texto e imagen (>1 activa ProcessPoolExecutor)",
     )
     parser.add_argument(
         "--log-level", default="INFO",
@@ -386,10 +335,26 @@ def main() -> None:
 
     persister.create_tables()
 
+    parallel = args.processes > 1
+
+    # ── Pasada 1: Texto ──────────────────────────────────────
     logger.info("=== Fase 1: Texto ===")
     text_features: List[Tuple[int, List[Dict[int, int]]]] = []
-    for doc_id, features in tqdm(
-        codebook_build_stage(
+
+    if parallel:
+        text_items = [
+            (doc_id, text, args.dataset_size)
+            for doc_id, text in get_text_data(args.dataset_size)
+        ]
+        for doc_id, text, _ in text_items:
+            persister.insert_document(doc_id, "", text)
+
+        text_stream = parallel_feature_stage(
+            text_items, _text_worker, text_codebook_builder,
+            max_workers=args.processes, label="  Texto",
+        )
+    else:
+        text_stream = codebook_build_stage(
             extract_feature_stage(
                 persist_and_split_stage(
                     get_text_data(args.dataset_size), splitter, persister,
@@ -397,7 +362,10 @@ def main() -> None:
                 text_extractor,
             ),
             text_codebook_builder,
-        ),
+        )
+
+    for doc_id, features in tqdm(
+        text_stream,
         total=args.dataset_size,
         desc="  Texto",
         unit="doc",
@@ -407,24 +375,30 @@ def main() -> None:
     logger.info("Vocabulario persistido: %d terminos, %d documentos",
                 len(text_extractor.vocab), len(text_features))
 
+    # ── Pasada 1: Imagen ─────────────────────────────────────
     logger.info("=== Fase 1: Imagen ===")
     image_features: List[Tuple[int, List[np.ndarray]]] = []
-    image_stream = (
-        parallel_image_pipeline(
-            args.dataset_size, visual_codebook_builder, persister,
-            max_workers=args.processes,
+
+    if parallel:
+        image_items = list(get_image_data(args.dataset_size))
+        for doc_id, _, _ in image_items:
+            persister.insert_document(doc_id, "", "")
+
+        image_stream = parallel_feature_stage(
+            image_items, _image_worker, visual_codebook_builder,
+            max_workers=args.processes, label="  Imagen",
         )
-        if args.processes > 1
-        else codebook_build_stage(
+    else:
+        image_stream = codebook_build_stage(
             extract_feature_stage(
                 persist_and_split_stage(
-                    get_image_data(args.dataset_size), splitter, persister
+                    get_image_data(args.dataset_size), splitter, persister,
                 ),
                 image_extractor,
             ),
             visual_codebook_builder,
         )
-    )
+
     for doc_id, features in tqdm(
         image_stream,
         total=args.dataset_size,
@@ -434,6 +408,7 @@ def main() -> None:
         image_features.append((doc_id, [desc for _, desc in features]))
     logger.info("Descriptores almacenados: %d documentos", len(image_features))
 
+    # ── Finalizar codebooks ──────────────────────────────────
     logger.info("=== Finalizando codebooks ===")
     visual_codebook = visual_codebook_builder.finalize()
     text_codebook = text_codebook_builder.finalize()
@@ -442,32 +417,36 @@ def main() -> None:
         len(visual_codebook), len(text_codebook),
     )
 
-    # --- Pasada 2: transformar features a histogramas (sin re-extraer) ---
+    # ── Pasada 2: Texto ──────────────────────────────────────
     logger.info("=== Pasada 2: Texto ===")
-    text_transform = TextCodebookTransform(text_codebook)
-    for doc_id, histogram in tqdm(
-        codebook_transform_and_persist_stage(
-            iter(text_features), text_transform, persister,
-        ),
-        total=len(text_features),
-        desc="  Texto",
-        unit="doc",
-    ): pass
-
-    logger.info("=== Pasada 2: Imagen ===")
-    if args.processes > 1:
-        image_histograms, image_tokens = parallel_image_transform(
-            iter(image_features), visual_codebook, persister,
-            max_workers=args.processes,
+    if parallel:
+        _, text_tokens = parallel_transform_stage(
+            iter(text_features), text_codebook, TextCodebookTransform,
+            persister, max_workers=args.processes,
+            label="  Texto", persist=False,
         )
-        class _DummyTransform:
-            pass
-        image_transform = _DummyTransform()
-        image_transform.tokens = image_tokens
-        image_transform.histograms = image_histograms
+    else:
+        text_transform = TextCodebookTransform(text_codebook)
+        for _ in tqdm(
+            codebook_transform_and_persist_stage(
+                iter(text_features), text_transform, persister,
+            ),
+            total=len(text_features),
+            desc="  Texto",
+            unit="doc",
+        ): pass
+        text_tokens = text_transform.tokens
+
+    # ── Pasada 2: Imagen ─────────────────────────────────────
+    logger.info("=== Pasada 2: Imagen ===")
+    if parallel:
+        _, image_tokens = parallel_transform_stage(
+            iter(image_features), visual_codebook, VisualCodebookTransform,
+            persister, max_workers=args.processes, label="  Imagen",
+        )
     else:
         image_transform = VisualCodebookTransform(visual_codebook)
-        for doc_id, histogram in tqdm(
+        for _ in tqdm(
             codebook_transform_and_persist_stage(
                 iter(image_features), image_transform, persister,
             ),
@@ -475,12 +454,13 @@ def main() -> None:
             desc="  Imagen",
             unit="doc",
         ): pass
+        image_tokens = image_transform.tokens
 
-    # --- Construcción de índices invertidos ---
+    # ── Construcción de índices invertidos ───────────────────
     logger.info("=== Construyendo índices invertidos ===")
     inverse_index = InverseIndex(args.dataset_size)
-    inverse_index.build_image_index(image_transform.tokens)
-    inverse_index.build_text_index(text_transform.tokens)
+    inverse_index.build_image_index(image_tokens)
+    inverse_index.build_text_index(text_tokens)
     logger.info("Índices invertidos listos")
 
     persister.dump_csv()

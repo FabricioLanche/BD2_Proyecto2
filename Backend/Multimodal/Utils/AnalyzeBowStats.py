@@ -16,14 +16,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 from nltk.stem.snowball import SnowballStemmer
 
-TEXT_COLUMNS = [
-    "gender", "masterCategory", "subCategory", "articleType",
-    "baseColour", "season", "year", "usage", "productDisplayName",
-]
-SAMPLE_SIZES = [10_000, 20_000, 30_000, 44_446]
+SAMPLE_SIZES = [10_000, 20_000, 30_000, 44_441]
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "Data"
-OUT_DIR = Path(__file__).resolve().parent.parent / "Data"
+OUT_DIR = Path(__file__).resolve().parent.parent / "Data" / "statistics"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -84,11 +80,7 @@ def analyze(dataset_size: int, stop_words: Set[str], stemmer: SnowballStemmer) -
             if docs >= dataset_size:
                 break
 
-            parts: List[str] = []
-            for col in TEXT_COLUMNS:
-                val = row.get(col, "")
-                parts.append(val if val else "")
-            texto = "|".join(parts)
+            texto = row.get("texto", "")
 
             tokens = preprocess(texto, stop_words, stemmer)
             counter.update(tokens)

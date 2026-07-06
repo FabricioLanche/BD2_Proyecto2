@@ -183,9 +183,7 @@ class InverseIndex:
 
         doc_norm_sq: dict[int, float] = {}
 
-        for word_id, posting_list in tqdm(
-            btree.scan(), desc="    TF-IDF", unit="word",
-        ):
+        for word_id, posting_list in btree.scan():
             df = len(posting_list)
             idf = math.log(N / df) if df > 0 else 0.0
             idf_hash.put(word_id, idf)

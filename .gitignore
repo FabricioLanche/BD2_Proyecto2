@@ -42,5 +42,5 @@ base_2_project
 tools/
 
 # Artefactos generados por el orquestador offline (codebooks, indices, tfidf, vocab)
-Backend/Multimodal/Data/
+Backend/Multimodal/Data/images
 
