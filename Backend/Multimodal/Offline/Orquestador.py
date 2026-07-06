@@ -59,10 +59,10 @@ def get_text_data(
 
 def get_image_data(
     dataset_size: Optional[int] = None,
-) -> Iterator[Tuple[int, str, np.ndarray]]:
+) -> Iterator[Tuple[int, str, str]]:
     """
     Lee Data/images.csv línea por línea usando csv.DictReader.
-    Lee cada imagen desde el sistema de archivos local.
+    Yield (doc_id, link, path_string) — el worker carga la imagen.
     """
     images_path = DATA_DIR / "images.csv"
     if not images_path.exists():
@@ -82,23 +82,15 @@ def get_image_data(
             doc_id = int(row.get("id", "0"))
             link = row.get("link", "")
 
-            local_path = DATA_DIR / "images" / Path(filename).name
-            if not local_path.is_file():
+            local_path = str(DATA_DIR / "images" / Path(filename).name)
+            if not Path(local_path).is_file():
                 logger.warning(
                     "Imagen local no encontrada doc_id=%d, path=%s",
                     doc_id, local_path,
                 )
                 continue
 
-            img = cv2.imread(str(local_path))
-            if img is None:
-                logger.warning(
-                    "No se pudo decodificar imagen local doc_id=%d, path=%s",
-                    doc_id, local_path,
-                )
-                continue
-
-            yield doc_id, link, img
+            yield doc_id, link, local_path
             count += 1
 
     logger.info("get_image_data: %d im\u00e1genes emitidas", count)
@@ -108,15 +100,19 @@ DATA_DIR_IMAGES = DATA_DIR / "images"
 
 # ── Workers para procesos hijo (pasada 1) ──────────────────────
 
-# get_image_data  → item = (doc_id, "", img)
+# get_image_data  → item = (doc_id, link, path_str)
 # get_text_data   → item = (doc_id, text)
 
 def _image_worker(
-    item: Tuple[int, str, np.ndarray],
+    item: Tuple[int, str, str],
 ) -> Optional[Tuple[int, list]]:
-    """Corre en proceso hijo: split + SIFT sobre imagen ya cargada."""
-    doc_id, _, img = item
+    """Corre en proceso hijo: carga imagen, split + SIFT."""
+    doc_id, _, path = item
     try:
+        img = cv2.imread(path)
+        if img is None:
+            logger.warning("No se pudo decodificar imagen doc_id=%d, path=%s", doc_id, path)
+            return None
         splitter = MultimodalSplitter()
         chunks = splitter.split(doc_id, img)
         extractor = ImageFeatureExtractor()
@@ -172,6 +168,25 @@ def parallel_feature_stage(
             yield doc_id, features
 
 
+def split_stage(
+    stream: Iterator,
+    splitter: MultimodalSplitter,
+) -> Iterator[Tuple[int, ChunkList]]:
+    """Solo split, sin persistencia (texto se persiste por lotes antes)."""
+    for item in stream:
+        if len(item) == 3:
+            doc_id, _, data = item
+            if isinstance(data, str):
+                data = cv2.imread(data)
+        else:
+            doc_id, data = item
+
+        if data is None:
+            continue
+        chunks = splitter.split(doc_id, data)
+        yield doc_id, chunks
+
+
 def persist_and_split_stage(
     stream: Iterator,
     splitter: MultimodalSplitter,
@@ -180,17 +195,21 @@ def persist_and_split_stage(
     """
     Stage combinado: persiste el documento (upsert) y luego aplica split.
 
-    Para imagen espera tripletes (doc_id, url, img) → upsert con url.
-    Para texto espera pares    (doc_id, text)  → upsert con texto.
+    Para imagen espera tripletes (doc_id, url, path_str) → carga imagen.
+    Para texto espera pares     (doc_id, text)          → upsert con texto.
     """
     for item in stream:
         if len(item) == 3:
             doc_id, url, data = item
             persister.insert_document(doc_id, url, "")
+            if isinstance(data, str):
+                data = cv2.imread(data)
         else:
             doc_id, data = item
             persister.insert_document(doc_id, "", data)
 
+        if data is None:
+            continue
         chunks = splitter.split(doc_id, data)
         yield doc_id, chunks
 
@@ -338,32 +357,21 @@ def main() -> None:
 
     parallel = args.processes > 1
 
-    # ── Pasada 1: Texto ──────────────────────────────────────
+    # ── Pasada 1: Texto (siempre secuencial — vocabulario global compartido) ──
     logger.info("=== Fase 1: Texto ===")
     text_features: List[Tuple[int, List[Dict[int, int]]]] = []
 
-    if parallel:
-        text_items = [
-            (doc_id, text, args.dataset_size)
-            for doc_id, text in get_text_data(args.dataset_size)
-        ]
-        for doc_id, text, _ in text_items:
-            persister.insert_document(doc_id, "", text)
-
-        text_stream = parallel_feature_stage(
-            text_items, _text_worker, text_codebook_builder,
-            max_workers=args.processes, label="  Texto",
-        )
-    else:
-        text_stream = codebook_build_stage(
-            extract_feature_stage(
-                persist_and_split_stage(
-                    get_text_data(args.dataset_size), splitter, persister,
-                ),
-                text_extractor,
-            ),
-            text_codebook_builder,
-        )
+    text_data = list(get_text_data(args.dataset_size))
+    persister.batch_insert_documents(
+        [(doc_id, "", text) for doc_id, text in text_data]
+    )
+    text_stream = codebook_build_stage(
+        extract_feature_stage(
+            split_stage(iter(text_data), splitter),
+            text_extractor,
+        ),
+        text_codebook_builder,
+    )
 
     for doc_id, features in tqdm(
         text_stream,
@@ -382,8 +390,9 @@ def main() -> None:
 
     if parallel:
         image_items = list(get_image_data(args.dataset_size))
-        for doc_id, url, _ in image_items:
-            persister.insert_document(doc_id, url, "")
+        persister.batch_insert_documents(
+            [(doc_id, url, "") for doc_id, url, _ in image_items]
+        )
 
         image_stream = parallel_feature_stage(
             image_items, _image_worker, visual_codebook_builder,

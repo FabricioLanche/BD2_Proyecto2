@@ -1,4 +1,3 @@
-import hashlib
 import os
 import struct
 from dataclasses import dataclass
@@ -166,13 +165,11 @@ class ExtendibleHashing:
     def _write_value(self, ptr: int, value: float) -> None:
         pn = ptr // self.FLOATS_PER_PAGE
         off = ptr % self.FLOATS_PER_PAGE
-        values = self.HEAP_FILE.read_float_values(
-            (self.HEAP_FILE.FILE_ID, pn)
-        )
-        values[off] = value
-        self.HEAP_FILE.write_float_values(
-            (self.HEAP_FILE.FILE_ID, pn), values
-        )
+        page_id = (self.HEAP_FILE.FILE_ID, pn)
+        data = bytearray(self.BUFFER_MANAGER.read_page(page_id))
+        # FloatPage: PAGE_HEADER_SIZE(8) + off * FLOAT_ENTRY_SIZE(4)
+        struct.pack_into("<f", data, 8 + off * 4, value)
+        self.BUFFER_MANAGER.write_page(page_id, data)
 
     # ── Directory I/O ───────────────────────────────────────────────
 
@@ -242,16 +239,15 @@ class ExtendibleHashing:
             off += HASH_ENTRY_SIZE
         self.BUFFER_MANAGER.write_page((self.BUCKET_FID, page_number), data)
 
-    # ── Hashing (SHA-256) ───────────────────────────────────────────
+    # ── Hashing (Knuth multiplicativo, ~10× más rápido que SHA-256) ──
 
     @staticmethod
     def _hash_key(key: int) -> int:
         key = int(key)
-        h = hashlib.sha256(key.to_bytes(8, "little", signed=True)).digest()
-        return int.from_bytes(h[:4], "little")
+        return (key * 0x9E3779B97F4A7C15) & 0xFFFFFFFF
 
     def _hash_idx(self, key: int) -> int:
-        return self._hash_key(key) & ((1 << self.FILE_HEADER.GLOBAL_DEPTH) - 1)
+        return self._hash_key(key) >> (32 - self.FILE_HEADER.GLOBAL_DEPTH)
 
     # ── Public API ──────────────────────────────────────────────────
 
