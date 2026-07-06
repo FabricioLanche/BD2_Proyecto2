@@ -10,7 +10,6 @@ from tqdm import tqdm
 import cv2
 import numpy as np
 
-
 from . import CodeBook as _cb_module
 from . import FeatureExtractor as _fe_module
 from . import InverseIndex as _ii_module
@@ -97,7 +96,6 @@ def get_image_data(
 
 DATA_DIR_IMAGES = DATA_DIR / "images"
 
-
 # ── Workers para procesos hijo (pasada 1) ──────────────────────
 
 # get_image_data  → item = (doc_id, link, path_str)
@@ -143,8 +141,7 @@ def parallel_feature_stage(
     items: List,
     worker_fn: Callable,
     codebook_builder: Union[VisualCodebookBuilder, TextCodebookBuilder],
-    max_workers: int,
-    label: str = "",
+    max_workers: int
 ) -> Iterator[Tuple[int, list]]:
     """
     Stage genérico de extracción en paralelo.

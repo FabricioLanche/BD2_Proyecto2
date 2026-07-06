@@ -12,7 +12,7 @@ from ..Utils.BufferManager import BufferManager
 
 
 class Search:
-    def __init__(self, n_documents: int, buffer_size: int = 1_000_000_000):
+    def __init__(self, n_documents: int, buffer_size: int = 128_000_000):
         self.n_documents = n_documents
         self.buffer_manager = BufferManager(buffer_size)
         self._data_dir = os.path.join(DATA_DIR, str(n_documents))
