@@ -1,0 +1,6 @@
+Backend/Multimodal/Data/
+.git
+__pycache__
+*.pyc
+.venv
+node_modules
