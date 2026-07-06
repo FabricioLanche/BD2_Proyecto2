@@ -95,6 +95,22 @@ class PersistenceManager:
                 logger.error(f"Error en insert_document doc_id={doc_id}: {e}")
                 raise
 
+    def batch_insert_documents(self, docs: list[tuple[int, str, str]]) -> None:
+        with self._get_cursor() as cursor:
+            try:
+                cursor.executemany("""
+                    INSERT INTO descriptors (doc_id, url, texto)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (doc_id) DO UPDATE SET
+                        url = CASE WHEN EXCLUDED.url != '' THEN EXCLUDED.url ELSE descriptors.url END,
+                        texto = CASE WHEN EXCLUDED.texto != '' THEN EXCLUDED.texto ELSE descriptors.texto END;
+                """, [(int(doc_id), url, texto) for doc_id, url, texto in docs])
+                self.connection.commit()
+            except Exception as e:
+                self.connection.rollback()
+                logger.error(f"Error en batch_insert_documents: {e}")
+                raise
+
     def insert_histogram(self, doc_id: int, histogram) -> None:
         with self._get_cursor() as cursor:
             try:

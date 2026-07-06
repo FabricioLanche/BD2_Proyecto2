@@ -18,7 +18,7 @@ INT_SIZE = getsizeof(0)
 
 
 class InverseIndex:
-    def __init__(self, n_documents: int, buffer_size: int = 1_000_000_000):
+    def __init__(self, n_documents: int, buffer_size: int = 2_000_000_000):
         self.n_documents = n_documents
         self.buffer_manager = BufferManager(buffer_size)
 
@@ -181,8 +181,11 @@ class InverseIndex:
             buffer_manager=buffer_manager,
         )
 
+        total_postings = sum(len(pl) for _, pl in btree.scan())
+
         doc_norm_sq: dict[int, float] = {}
 
+        pbar = tqdm(total=total_postings, desc=f"  TF-IDF {prefix}", unit="post")
         for word_id, posting_list in btree.scan():
             df = len(posting_list)
             idf = math.log(N / df) if df > 0 else 0.0
@@ -193,9 +196,14 @@ class InverseIndex:
                 tf = posting.TF
                 weighted = tf * idf
                 doc_norm_sq[doc_id] = doc_norm_sq.get(doc_id, 0.0) + weighted * weighted
+                pbar.update(1)
+        pbar.close()
 
+        pbar2 = tqdm(total=len(doc_norm_sq), desc=f"  DocNorm {prefix}", unit="doc")
         for doc_id, sq in doc_norm_sq.items():
             norm_hash.put(doc_id, math.sqrt(sq))
+            pbar2.update(1)
+        pbar2.close()
 
         idf_hash.close()
         norm_hash.close()
@@ -203,7 +211,7 @@ class InverseIndex:
     def build_text_index(
         self,
         token_stream: list[tuple[int, int]],
-        buffer_size: int = 50_000_000,
+        buffer_size: int = 500_000_000,
     ) -> BPlusTree:
         btree_path = os.path.join(DATA_DIR, f'text_index_{self.n_documents}.btree')
         heap_path = os.path.join(DATA_DIR, f'text_index_{self.n_documents}.heap')
@@ -218,7 +226,7 @@ class InverseIndex:
     def build_image_index(
         self,
         token_stream: list[tuple[int, int]],
-        buffer_size: int = 50_000_000,
+        buffer_size: int = 500_000_000,
     ) -> BPlusTree:
         btree_path = os.path.join(DATA_DIR, f'image_index_{self.n_documents}.btree')
         heap_path = os.path.join(DATA_DIR, f'image_index_{self.n_documents}.heap')
