@@ -1,14 +1,19 @@
+from pathlib import Path
+
 import psycopg2
 import logging
-from psycopg2.extras import execute_values
 from pgvector.psycopg2 import register_vector
 
 logger = logging.getLogger(__name__)
 
 class PersistenceManager:
 
-    def __init__(self, host="localhost", port="5432", database="multimodal", user="postgres", password="123456"):
-        
+    def __init__(self, n_documents: int, host="localhost", port="5433", database="multimodal", user="postgres", password="123456"):
+        self.n_documents = n_documents
+        base = Path(__file__).resolve().parent.parent / "Data"
+        self.data_dir = base / str(n_documents) if n_documents is not None else base
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+
         self.connection = psycopg2.connect(
             host=host,
             port=port,
@@ -28,7 +33,7 @@ class PersistenceManager:
     def _get_cursor(self):
         return self.connection.cursor()
     
-    def create_tables(self, histogram_dim: int = 128):
+    def create_tables(self, histogram_dim: int = 512):
         # histogram_dim = k del codebook visual; el orquestador lo pasa
         # tras construir el codebook para que la columna calce con el histograma.
 
@@ -49,6 +54,23 @@ class PersistenceManager:
                         ) STORED,
                         image_histogram VECTOR({int(histogram_dim)})
                     );
+
+                CREATE INDEX idx_descriptors_texto_vector_gin
+                ON descriptors
+                USING GIN (texto_vector);
+
+                CREATE INDEX idx_descriptors_texto_vector_gist
+                ON descriptors
+                USING GiST (texto_vector);
+
+                CREATE INDEX idx_descriptors_image_histogram_hnsw
+                ON descriptors
+                USING hnsw (image_histogram vector_l2_ops);
+            
+                CREATE INDEX idx_descriptors_image_histogram_ivfflat
+                ON descriptors
+                USING ivfflat (image_histogram vector_l2_ops)
+                WITH (lists = 100);
                 """)
 
                 self.connection.commit()
@@ -56,62 +78,61 @@ class PersistenceManager:
                 self.connection.rollback()
                 logger.error(f"Error creando tablas: {e}")
                 raise
-
-# hablar con el orquestador para definir los nombres de las columnas
-    def insert_document(self, df, page_size = 5000):
-
-        rows = [
-            (int(row.doc_id), row.url, row.texto)
-            for row in df.itertuples(index=False)
-        ]
-
+            
+    def insert_document(self, doc_id: int, url: str, texto: str) -> None:
         with self._get_cursor() as cursor:
             try:
-                execute_values(
-                    cursor,
-                    """
+                cursor.execute("""
                     INSERT INTO descriptors (doc_id, url, texto)
-                    VALUES %s
+                    VALUES (%s, %s, %s)
                     ON CONFLICT (doc_id) DO UPDATE SET
-                        url = EXCLUDED.url,
-                        texto = EXCLUDED.texto;
-                    """,
-                    rows,
-                    page_size = page_size,
-                )
+                        url = CASE WHEN EXCLUDED.url != '' THEN EXCLUDED.url ELSE descriptors.url END,
+                        texto = CASE WHEN EXCLUDED.texto != '' THEN EXCLUDED.texto ELSE descriptors.texto END;
+                """, (int(doc_id), url, texto))
                 self.connection.commit()
-                logger.info(f"Insertados/actualizados {len(rows)} documentos.")
             except Exception as e:
                 self.connection.rollback()
-                logger.error(f"Error en insert_document: {e}")
+                logger.error(f"Error en insert_document doc_id={doc_id}: {e}")
                 raise
 
-    def update_histograms(self, histograms, page_size=5000):
-
-        rows = [
-            (int(doc_id), histogram)
-            for doc_id, histogram in histograms
-        ]
-
+    def insert_histogram(self, doc_id: int, histogram) -> None:
         with self._get_cursor() as cursor:
-            try: 
-                execute_values(
-                    cursor,
-                    """
-                    UPDATE descriptors AS d
-                    SET image_histogram = data.image_histogram::vector
-                    FROM (VALUES %s) AS data(doc_id, image_histogram)
-                    WHERE d.doc_id = data.doc_id::integer;
-                    """,
-                    rows,
-                    page_size=page_size
-                )
+            try:
+                cursor.execute("""
+                    UPDATE descriptors SET image_histogram = %s::vector
+                    WHERE doc_id = %s;
+                """, (histogram.tolist(), int(doc_id)))
                 self.connection.commit()
-                logger.info(f"Histogramas actualizados: {len(rows)}")
             except Exception as e:
                 self.connection.rollback()
-                logger.error(f"Error en update_histograms: {e}")
+                logger.error(f"Error en insert_histogram doc_id={doc_id}: {e}")
                 raise
+
+    def dump_csv(self) -> str:
+        filename = str(self.data_dir / f"descriptors_dump_{self.n_documents}.csv")
+
+        with open(filename, "w", encoding="utf-8") as f:
+            with self._get_cursor() as cursor:
+                cursor.copy_expert(
+                    "COPY descriptors TO STDOUT WITH CSV HEADER DELIMITER ','",
+                    f,
+                )
+
+        logger.info("Dump exportado a %s", filename)
+        return filename
+
+    def load_csv(self, filename: str) -> int:
+        with self._get_cursor() as cursor:
+            with open(filename, "r", encoding="utf-8") as f:
+                cursor.copy_expert(
+                    "COPY descriptors FROM STDIN WITH CSV HEADER DELIMITER ','",
+                    f,
+                )
+            self.connection.commit()
+            count = cursor.rowcount
+
+        logger.info("Cargadas %d filas desde %s", count, filename)
+        return count
 
     def close(self):
         if self.connection and not self.connection.closed:

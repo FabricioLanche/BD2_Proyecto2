@@ -1,12 +1,14 @@
 import math
 import os
-import pickle
 import tempfile
 import shutil
 from sys import getsizeof
 
+from tqdm import tqdm
+
 from ..Utils.BPlusTree import BPlusTree
 from ..Utils.BufferManager import BufferManager
+from ..Utils.ExtendibleHashing import IDFHash, DocNormHash
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'Data')
 
@@ -16,7 +18,8 @@ INT_SIZE = getsizeof(0)
 
 
 class InverseIndex:
-    def __init__(self, buffer_size: int = 1_000_000_000):
+    def __init__(self, n_documents: int, buffer_size: int = 1_000_000_000):
+        self.n_documents = n_documents
         self.buffer_manager = BufferManager(buffer_size)
 
     @staticmethod
@@ -114,7 +117,9 @@ class InverseIndex:
         blocks: list[tuple[str, str]] = []
 
         try:
-            for doc_id, codeword_id in token_stream:
+            for doc_id, codeword_id in tqdm(
+                token_stream, desc="    SPIMI", unit="tok",
+            ):
                 if codeword_id not in buffer:
                     buffer[codeword_id] = {}
                     buffer_mem += InverseIndex._estimate_pair_mem(
@@ -156,14 +161,32 @@ class InverseIndex:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
     @staticmethod
-    def _compute_and_persist_tfidf(btree: BPlusTree, N: int, prefix: str) -> None:
-        word_idf: dict[int, float] = {}
+    def _compute_and_persist_tfidf(
+        btree: BPlusTree, N: int, prefix: str,
+        buffer_manager: BufferManager,
+    ) -> None:
+        file_ids = {'text': (4, 5, 6, 7), 'image': (8, 9, 10, 11)}
+        idf_bfid, idf_vfid, norm_bfid, norm_vfid = file_ids[prefix]
+
+        idf_hash = IDFHash(
+            os.path.join(DATA_DIR, f'{prefix}_word_idf_{N}.hash'),
+            bucket_file_id=idf_bfid,
+            value_file_id=idf_vfid,
+            buffer_manager=buffer_manager,
+        )
+        norm_hash = DocNormHash(
+            os.path.join(DATA_DIR, f'{prefix}_doc_norm_{N}.hash'),
+            bucket_file_id=norm_bfid,
+            value_file_id=norm_vfid,
+            buffer_manager=buffer_manager,
+        )
+
         doc_norm_sq: dict[int, float] = {}
 
         for word_id, posting_list in btree.scan():
             df = len(posting_list)
             idf = math.log(N / df) if df > 0 else 0.0
-            word_idf[word_id] = idf
+            idf_hash.put(word_id, idf)
 
             for posting in posting_list:
                 doc_id = posting.DOC_ID
@@ -171,42 +194,38 @@ class InverseIndex:
                 weighted = tf * idf
                 doc_norm_sq[doc_id] = doc_norm_sq.get(doc_id, 0.0) + weighted * weighted
 
-        doc_norm = {doc_id: math.sqrt(sq) for doc_id, sq in doc_norm_sq.items()}
+        for doc_id, sq in doc_norm_sq.items():
+            norm_hash.put(doc_id, math.sqrt(sq))
 
-        os.makedirs(DATA_DIR, exist_ok=True)
-        with open(os.path.join(DATA_DIR, f'{prefix}_word_idf.pkl'), 'wb') as f:
-            pickle.dump(word_idf, f)
-        with open(os.path.join(DATA_DIR, f'{prefix}_doc_norm.pkl'), 'wb') as f:
-            pickle.dump(doc_norm, f)
+        idf_hash.close()
+        norm_hash.close()
 
     def build_text_index(
         self,
         token_stream: list[tuple[int, int]],
-        n_documents: int,
         buffer_size: int = 50_000_000,
     ) -> BPlusTree:
-        btree_path = os.path.join(DATA_DIR, 'text_index.btree')
-        heap_path = os.path.join(DATA_DIR, 'text_index.heap')
+        btree_path = os.path.join(DATA_DIR, f'text_index_{self.n_documents}.btree')
+        heap_path = os.path.join(DATA_DIR, f'text_index_{self.n_documents}.heap')
         btree = self._spimi_index_construction(
             token_stream, btree_path, heap_path, buffer_size,
             btree_file_id=0, heap_file_id=1,
             buffer_manager=self.buffer_manager,
         )
-        self._compute_and_persist_tfidf(btree, n_documents, 'text')
+        self._compute_and_persist_tfidf(btree, self.n_documents, 'text', self.buffer_manager)
         return btree
 
     def build_image_index(
         self,
         token_stream: list[tuple[int, int]],
-        n_documents: int,
         buffer_size: int = 50_000_000,
     ) -> BPlusTree:
-        btree_path = os.path.join(DATA_DIR, 'image_index.btree')
-        heap_path = os.path.join(DATA_DIR, 'image_index.heap')
+        btree_path = os.path.join(DATA_DIR, f'image_index_{self.n_documents}.btree')
+        heap_path = os.path.join(DATA_DIR, f'image_index_{self.n_documents}.heap')
         btree = self._spimi_index_construction(
             token_stream, btree_path, heap_path, buffer_size,
             btree_file_id=2, heap_file_id=3,
             buffer_manager=self.buffer_manager,
         )
-        self._compute_and_persist_tfidf(btree, n_documents, 'image')
+        self._compute_and_persist_tfidf(btree, self.n_documents, 'image', self.buffer_manager)
         return btree
