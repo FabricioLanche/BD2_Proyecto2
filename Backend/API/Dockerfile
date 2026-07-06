@@ -16,7 +16,7 @@ COPY Backend/ Backend/
 
 COPY Backend/API/entrypoint.sh  /entrypoint.sh
 COPY Backend/API/init_db.py    /init_db.py
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh /init_db.py && chmod +x /entrypoint.sh
 
 EXPOSE 8000
 
