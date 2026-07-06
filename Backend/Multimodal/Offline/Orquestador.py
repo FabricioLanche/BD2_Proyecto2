@@ -80,6 +80,7 @@ def get_image_data(
                 continue
 
             doc_id = int(row.get("id", "0"))
+            link = row.get("link", "")
 
             local_path = DATA_DIR / "images" / Path(filename).name
             if not local_path.is_file():
@@ -97,7 +98,7 @@ def get_image_data(
                 )
                 continue
 
-            yield doc_id, "", img
+            yield doc_id, link, img
             count += 1
 
     logger.info("get_image_data: %d im\u00e1genes emitidas", count)
@@ -381,8 +382,8 @@ def main() -> None:
 
     if parallel:
         image_items = list(get_image_data(args.dataset_size))
-        for doc_id, _, _ in image_items:
-            persister.insert_document(doc_id, "", "")
+        for doc_id, url, _ in image_items:
+            persister.insert_document(doc_id, url, "")
 
         image_stream = parallel_feature_stage(
             image_items, _image_worker, visual_codebook_builder,
