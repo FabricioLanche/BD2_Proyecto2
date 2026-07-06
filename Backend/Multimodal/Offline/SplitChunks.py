@@ -11,7 +11,7 @@ class MultimodalSplitter:
         self,
         chunk_size: int = 160,
         overlap: int = 0,
-        image_patch_size: Tuple[int, int] = (64, 64),
+        image_patch_size: Tuple[int, int] = (80, 64),
         image_overlap: Tuple[int, int] = (0, 0),
     ):
         self.chunk_size = chunk_size
