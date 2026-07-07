@@ -8,6 +8,26 @@ interface SearchResult {
   match_percentage: string
 }
 
+export interface SearchMetrics {
+  query_ms: number
+  page_requests: number
+  cache_hits: number
+  disk_reads: number
+  disk_writes: number
+  disk_read_ms: number
+  disk_write_ms: number
+}
+
+interface SearchResponse {
+  results: SearchResult[]
+  metrics: SearchMetrics
+}
+
+interface EnrichedResult {
+  results: ProductCardData[]
+  metrics: SearchMetrics
+}
+
 interface ProductDetail {
   id: string
   name: string
@@ -56,18 +76,24 @@ async function enrichResults(results: SearchResult[]): Promise<ProductCardData[]
   })
 }
 
-export async function visualSearch(image: File, topK = 10): Promise<ProductCardData[]> {
+export async function visualSearch(
+  image: File,
+  topK = 10,
+  searchType: string = 'spimi'
+): Promise<EnrichedResult> {
   const formData = new FormData()
   formData.append('image', image)
   formData.append('top_k', String(topK))
+  formData.append('search_type', searchType)
 
   const res = await fetch(`${API_BASE}/visual`, {
     method: 'POST',
     body: formData,
   })
   if (!res.ok) throw new Error('Visual search failed')
-  const data: { results: SearchResult[] } = await res.json()
-  return enrichResults(data.results)
+  const data: SearchResponse = await res.json()
+  const results = await enrichResults(data.results)
+  return { results, metrics: data.metrics }
 }
 
 export async function multimodalSearch(
@@ -75,20 +101,23 @@ export async function multimodalSearch(
   textQuery: string,
   weightVisual: number,
   weightText: number,
-  topK = 10
-): Promise<ProductCardData[]> {
+  topK = 10,
+  searchType: string = 'spimi'
+): Promise<EnrichedResult> {
   const formData = new FormData()
   if (image) formData.append('image', image)
   formData.append('text_query', textQuery)
   formData.append('weight_visual', String(weightVisual))
   formData.append('weight_text', String(weightText))
   formData.append('top_k', String(topK))
+  formData.append('search_type', searchType)
 
   const res = await fetch(`${API_BASE}/multimodal`, {
     method: 'POST',
     body: formData,
   })
   if (!res.ok) throw new Error('Multimodal search failed')
-  const data: { results: SearchResult[] } = await res.json()
-  return enrichResults(data.results)
+  const data: SearchResponse = await res.json()
+  const results = await enrichResults(data.results)
+  return { results, metrics: data.metrics }
 }

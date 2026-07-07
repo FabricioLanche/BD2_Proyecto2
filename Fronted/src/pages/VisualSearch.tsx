@@ -2,7 +2,8 @@ import { useState } from 'react'
 import UploadZone from '../components/UploadZone'
 import ProductCard, { type ProductCardData } from '../components/ProductCard'
 import DetailModal from '../components/DetailModal'
-import { visualSearch } from '../services/api'
+import SearchModeSelector from '../components/SearchModeSelector'
+import { visualSearch, type SearchMetrics } from '../services/api'
 
 const PER_PAGE = 5
 
@@ -16,6 +17,8 @@ export default function VisualSearch() {
   const [error, setError] = useState<string | null>(null)
   const [topK, setTopK] = useState<number | string>('')
   const [searched, setSearched] = useState(false)
+  const [searchMode, setSearchMode] = useState<'spimi' | 'postgres'>('spimi')
+  const [metrics, setMetrics] = useState<SearchMetrics | null>(null)
 
   const totalPages = Math.max(1, Math.ceil(results.length / PER_PAGE))
 
@@ -31,13 +34,15 @@ export default function VisualSearch() {
   const handleSearch = async () => {
     if (!imageFile) return
     setResults([])
+    setMetrics(null)
     setError(null)
     setPage(1)
     setLoading(true)
     setSearched(false)
     try {
-      const data = await visualSearch(imageFile, topK || 10)
-      setResults(data)
+      const { results, metrics } = await visualSearch(imageFile, topK || 10, searchMode)
+      setResults(results)
+      setMetrics(metrics)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Search failed')
     } finally {
@@ -88,21 +93,24 @@ export default function VisualSearch() {
           subLabel="Or click to browse your files"
         />
       </div>
-      <div className="border-t border-outline-variant/40 px-4 py-3 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <label className="font-label-sm text-label-sm text-on-surface-variant/50 whitespace-nowrap">Results</label>
-          <input
-            type="number"
-            min={1}
-            value={topK}
-            onChange={(e) => setTopK(e.target.value === '' ? '' : Number(e.target.value))}
-            placeholder="K"
-            className={`w-16 bg-surface-container border rounded-lg px-2.5 py-1.5 font-label-sm text-label-sm outline-none focus:ring-1 focus:ring-primary/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
-              topK === ''
-                ? 'border-dashed border-outline-variant/30 text-on-surface-variant/35'
-                : 'border-outline-variant/40 text-on-surface'
-            }`}
-          />
+      <div className="border-t border-outline-variant/40 px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label className="font-label-sm text-label-sm text-on-surface-variant/50 whitespace-nowrap">Results</label>
+            <input
+              type="number"
+              min={1}
+              value={topK}
+              onChange={(e) => setTopK(e.target.value === '' ? '' : Number(e.target.value))}
+              placeholder="K"
+              className={`w-16 bg-surface-container border rounded-lg px-2.5 py-1.5 font-label-sm text-label-sm outline-none focus:ring-1 focus:ring-primary/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+                topK === ''
+                  ? 'border-dashed border-outline-variant/30 text-on-surface-variant/35'
+                  : 'border-outline-variant/40 text-on-surface'
+              }`}
+            />
+          </div>
+          <SearchModeSelector value={searchMode} onChange={setSearchMode} />
         </div>
         {searchBtn}
       </div>
@@ -127,6 +135,27 @@ export default function VisualSearch() {
           <div className="flex-1 min-h-0" />
           <div className="flex-none">
             {inputCard}
+
+            {metrics && (
+              <div className="flex items-center gap-3 flex-wrap mt-4">
+                <span className="inline-flex items-center gap-1 font-code text-[11px] text-on-surface-variant/50 bg-surface-container px-2.5 py-1 rounded-full">
+                  <span className="material-symbols-outlined text-[13px]">timer</span>
+                  {metrics.query_ms.toFixed(1)} ms
+                </span>
+                <span className="inline-flex items-center gap-1 font-code text-[11px] text-on-surface-variant/50 bg-surface-container px-2.5 py-1 rounded-full">
+                  <span className="material-symbols-outlined text-[13px]">storage</span>
+                  {metrics.page_requests} page req
+                </span>
+                <span className="inline-flex items-center gap-1 font-code text-[11px] text-on-surface-variant/50 bg-surface-container px-2.5 py-1 rounded-full">
+                  <span className="material-symbols-outlined text-[13px]">memory</span>
+                  {metrics.cache_hits} cache hits
+                </span>
+                <span className="inline-flex items-center gap-1 font-code text-[11px] text-on-surface-variant/50 bg-surface-container px-2.5 py-1 rounded-full">
+                  <span className="material-symbols-outlined text-[13px]">database</span>
+                  {metrics.disk_reads} reads / {metrics.disk_writes} writes
+                </span>
+              </div>
+            )}
 
             {error && (
               <div className="bg-error-container/80 text-on-error-container rounded-xl px-4 py-3 font-body-md text-body-md border border-error/10 mt-4">
