@@ -28,13 +28,13 @@ services:
       DB_NAME: multimodal
       DB_USER: postgres
       DB_PASSWORD: 123456
-      DATASET_SIZE: "10000"
+      DATASET_SIZE: "40000"
     ports:
       - "8000:8000"
     volumes:
       - ./Backend/Multimodal/Data:/app/Backend/Multimodal/Data
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/details/1')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
       interval: 5s
       timeout: 5s
       retries: 10
