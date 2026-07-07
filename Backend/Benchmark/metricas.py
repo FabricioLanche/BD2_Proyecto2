@@ -1,17 +1,21 @@
 import time
 import csv
+import math
+import pickle
 import psycopg2
 import random
+import numpy as np
 from collections import defaultdict
 from pathlib import Path
+from pgvector.psycopg2 import register_vector
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 TAMAÑOS = [10000, 20000, 30000, 40000]
-TOP_K = 100
-QUERIES_TEXTO = ["blue shirt", "black shoes", "red dress", "summer hat", "casual jeans"]
+TOP_K = 50
+QUERIES_TEXTO = ["Men|Apparel|Topwear|Shirts|Navy Blue|Fall|2011.0|Casual|Turtle Check Men Navy Blue Shirt", "Men|Apparel|Bottomwear|Jeans|Blue|Summer|2012.0|Casual|Peter England Men Party Blue Jeanss", "Women|Accessories|Watches|Watches|Silver|Winter|2016.0|Casual|Titan Women Silver Watch", "Men|Apparel|Bottomwear|Track Pants|Black|Fall|2011.0|Casual|Manchester United Men Solid Black Track Pants", "Men|Apparel|Topwear|Tshirts|Grey|Summer|2012.0|Casual|Puma Men Grey T-shirt"]
 
 DB_CONFIG = {
     "host": "localhost", 
@@ -31,6 +35,17 @@ if not TODAS_LAS_IMAGENES:
 else:
     QUERY_IMAGENES = random.sample(TODAS_LAS_IMAGENES, min(5, len(TODAS_LAS_IMAGENES)))
 
+STYLES_CSV = BASE_DIR / "Multimodal" / "Data" / "styles.csv"
+
+def load_subcategory_map(path: Path) -> dict[int, str]:
+    mapping: dict[int, str] = {}
+    with open(path, "r", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        next(reader)
+        for row in reader:
+            mapping[int(row[0])] = row[1].split("|")[2] if len(row[1].split("|")) > 2 else ""
+    return mapping
+
 
 def preparar_entorno(tamano, db_config):
     data_dir = BASE_DIR / "Multimodal" / "Data"
@@ -40,19 +55,11 @@ def preparar_entorno(tamano, db_config):
 
     if carpeta_respaldo.exists() and archivo_csv.exists() and archivo_pkl.exists():
         print(f"\nArchivos encontrados para tamaño {tamano}. Actualizando PostgreSQL...")
-        import pickle
         from Backend.Multimodal.Offline.Persistence import PersistenceManager
         
-        with open(archivo_pkl, "rb") as f:
-            dimension_real = len(pickle.load(f))
-        texto_codebook_path = carpeta_respaldo / f"text_codebook_{tamano}.pkl"
-        with open(texto_codebook_path, "rb") as f:
-            texto_dim = len(pickle.load(f))
-            
-        print(f"  Recreando tabla PostgreSQL con dimensión {dimension_real}...")
+        print(f"  Recreando tabla PostgreSQL...")
         pm = PersistenceManager(n_documents=tamano, **db_config)
-        pm.create_tables(histogram_dim=dimension_real)
-        pm.add_text_histogram_column(texto_dim)
+        pm.create_tables()
         
         print("  Inyectando datos del CSV a PostgreSQL...")
         filas = pm.load_csv(str(archivo_csv))
@@ -61,10 +68,10 @@ def preparar_entorno(tamano, db_config):
         return True
     else:
         print(f"\nNo se encontró respaldo para tamaño {tamano}. Construyendo índice desde cero...")
-        import subprocess
+        import subprocess, sys
         try:
             subprocess.run(
-                ["python", "-m", "Backend.Multimodal.Offline.Orquestador", "--dataset-size", str(tamano), "--processes", "4"],
+                [sys.executable, "-m", "Backend.Multimodal.Offline.Orquestador", "--dataset-size", str(tamano), "--processes", "4"],
                 check=True
             )
             print(f"  Construcción offline completada con éxito para tamaño {tamano}.")
@@ -110,79 +117,89 @@ def medir_disco(tamano):
             pg_ivfflat = cur.fetchone()[0]
             cur.execute("SELECT pg_relation_size('idx_descriptors_image_histogram_hnsw')")
             pg_hnsw = cur.fetchone()[0]
-            cur.execute("SELECT pg_relation_size('idx_descriptors_text_histogram_hnsw')")
-            pg_text_hnsw = cur.fetchone()[0]
-            cur.execute("SELECT pg_relation_size('idx_descriptors_text_histogram_ivfflat')")
-            pg_text_ivfflat = cur.fetchone()[0]
         conn.close()
     except Exception:
-        pg_gin = pg_gist = pg_toast = pg_ivfflat = pg_hnsw = pg_text_hnsw = pg_text_ivfflat = 0
+        pg_gin = pg_gist = pg_toast = pg_ivfflat = pg_hnsw = 0
 
     codebook_bytes = (data_dir / f"visual_codebook_{tamano}.pkl").stat().st_size
 
     return {
         "tamano": tamano,
         "spimi_texto_mb": round(spimi_texto_bytes / (1024 * 1024), 2),
-        "postgre_texto_mb": round((pg_gin + pg_gist + pg_text_hnsw + pg_text_ivfflat + pg_toast) / (1024 * 1024), 2),
+        "gin_mb": round(pg_gin / (1024 * 1024), 2),
+        "gist_mb": round(pg_gist / (1024 * 1024), 2),
         "spimi_imagen_mb": round(spimi_imagen_bytes / (1024 * 1024), 2),
-        "postgre_imagen_mb": round((pg_ivfflat + pg_hnsw + codebook_bytes) / (1024 * 1024), 2),
+        "ivfflat_mb": round(pg_ivfflat / (1024 * 1024), 2),
+        "hnsw_mb": round(pg_hnsw / (1024 * 1024), 2),
     }
 
-def calcular_recall(res_obtenido, res_esperado):
-    set_esperado = set(res_esperado)
-    if res_obtenido and isinstance(res_obtenido[0], dict):
-        set_obtenido = set(r["doc_id"] for r in res_obtenido)
+def calcular_recall_subcategory(result, sub_map: dict[int, str], k: int) -> float:
+    if result and isinstance(result[0], dict):
+        doc_ids = [r["doc_id"] for r in result]
     else:
-        set_obtenido = set(res_obtenido)
-    if not set_esperado:
+        doc_ids = result
+    if not doc_ids:
         return 0.0
-    return len(set_esperado.intersection(set_obtenido)) / len(set_esperado)
+    target = sub_map.get(doc_ids[0])
+    if not target:
+        return 0.0
+    matches = sum(1 for doc_id in doc_ids[:k] if sub_map.get(doc_id) == target)
+    return matches / k
 
 
-def busqueda_nativa_texto(conn, texto):
+def busqueda_gin_texto(conn, texto):
     query_explicar = """
         EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) 
         SELECT doc_id FROM descriptors 
         WHERE texto_vector @@ plainto_tsquery('english', %s) 
         ORDER BY ts_rank(texto_vector, plainto_tsquery('english', %s)) DESC 
-        LIMIT 100;
+        LIMIT 50;
     """
     with conn.cursor() as cur:
+        cur.execute("SET LOCAL enable_indexscan = OFF;")
+        cur.execute("SET LOCAL enable_indexonlyscan = OFF;")
+        cur.execute("SET LOCAL enable_seqscan = OFF;")
         cur.execute(query_explicar, (texto, texto))
         explicacion = cur.fetchone()[0][0]
         io_blocks = explicacion.get("Plan", {}).get("Shared Read Blocks", 0)
-        
+
     query_real = """
         SELECT doc_id FROM descriptors 
         WHERE texto_vector @@ plainto_tsquery('english', %s) 
         ORDER BY ts_rank(texto_vector, plainto_tsquery('english', %s)) DESC 
-        LIMIT 100;
+        LIMIT 50;
     """
     with conn.cursor() as cur:
+        cur.execute("SET LOCAL enable_indexscan = OFF;")
+        cur.execute("SET LOCAL enable_indexonlyscan = OFF;")
+        cur.execute("SET LOCAL enable_seqscan = OFF;")
         cur.execute(query_real, (texto, texto))
         return [row[0] for row in cur.fetchall()], io_blocks
 
-def busqueda_nativa_imagen(conn, orquestador, ruta_imagen):
+
+def busqueda_ivfflat_imagen(conn, orquestador, ruta_imagen):
     vector = orquestador._image_histogram(str(ruta_imagen))
     vector_string = f"[{','.join(map(str, vector))}]"
-    
+
     query_explicar = """
         EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) 
         SELECT doc_id FROM descriptors 
         ORDER BY image_histogram <=> %s::vector 
-        LIMIT 100;
+        LIMIT 50;
     """
     with conn.cursor() as cur:
+        cur.execute("SET LOCAL enable_seqscan = OFF;")
         cur.execute(query_explicar, (vector_string,))
         explicacion = cur.fetchone()[0][0]
         io_blocks = explicacion.get("Plan", {}).get("Shared Read Blocks", 0)
-        
+
     query_real = """
         SELECT doc_id FROM descriptors 
         ORDER BY image_histogram <=> %s::vector 
-        LIMIT 100;
+        LIMIT 50;
     """
     with conn.cursor() as cur:
+        cur.execute("SET LOCAL enable_seqscan = OFF;")
         cur.execute(query_real, (vector_string,))
         return [row[0] for row in cur.fetchall()], io_blocks
 
@@ -193,9 +210,11 @@ def busqueda_gist_texto(conn, texto):
         SELECT doc_id FROM descriptors 
         WHERE texto_vector @@ plainto_tsquery('english', %s) 
         ORDER BY ts_rank(texto_vector, plainto_tsquery('english', %s)) DESC 
-        LIMIT 100;
+        LIMIT 50;
     """
     with conn.cursor() as cur:
+        cur.execute("SET LOCAL enable_bitmapscan = OFF;")
+        cur.execute("SET LOCAL enable_seqscan = OFF;")
         cur.execute(query_explicar, (texto, texto))
         explicacion = cur.fetchone()[0][0]
         io_blocks = explicacion.get("Plan", {}).get("Shared Read Blocks", 0)
@@ -204,9 +223,11 @@ def busqueda_gist_texto(conn, texto):
         SELECT doc_id FROM descriptors 
         WHERE texto_vector @@ plainto_tsquery('english', %s) 
         ORDER BY ts_rank(texto_vector, plainto_tsquery('english', %s)) DESC 
-        LIMIT 100;
+        LIMIT 50;
     """
     with conn.cursor() as cur:
+        cur.execute("SET LOCAL enable_bitmapscan = OFF;")
+        cur.execute("SET LOCAL enable_seqscan = OFF;")
         cur.execute(query_real, (texto, texto))
         return [row[0] for row in cur.fetchall()], io_blocks
 
@@ -219,9 +240,10 @@ def busqueda_hnsw_imagen(conn, orquestador, ruta_imagen):
         EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) 
         SELECT doc_id FROM descriptors 
         ORDER BY image_histogram <=> %s::vector 
-        LIMIT 100;
+        LIMIT 50;
     """
     with conn.cursor() as cur:
+        cur.execute("SET LOCAL enable_seqscan = OFF;")
         cur.execute(query_explicar, (vector_string,))
         explicacion = cur.fetchone()[0][0]
         io_blocks = explicacion.get("Plan", {}).get("Shared Read Blocks", 0)
@@ -229,9 +251,10 @@ def busqueda_hnsw_imagen(conn, orquestador, ruta_imagen):
     query_real = """
         SELECT doc_id FROM descriptors 
         ORDER BY image_histogram <=> %s::vector 
-        LIMIT 100;
+        LIMIT 50;
     """
     with conn.cursor() as cur:
+        cur.execute("SET LOCAL enable_seqscan = OFF;")
         cur.execute(query_real, (vector_string,))
         return [row[0] for row in cur.fetchall()], io_blocks
 
@@ -251,7 +274,7 @@ def busqueda_lineal_texto(conn, orquestador, texto):
             SELECT doc_id FROM descriptors
             WHERE text_histogram IS NOT NULL
             ORDER BY text_histogram <=> %s::vector
-            LIMIT 100;
+            LIMIT 50;
         """, (vector_string,))
         results = [row[0] for row in cur.fetchall()]
         conn.commit()
@@ -278,7 +301,7 @@ def busqueda_lineal_imagen(conn, orquestador, ruta_imagen):
             SELECT doc_id FROM descriptors
             WHERE image_histogram IS NOT NULL
             ORDER BY image_histogram <=> %s::vector
-            LIMIT 100;
+            LIMIT 50;
         """, (vector_string,))
         results = [row[0] for row in cur.fetchall()]
         conn.commit()
@@ -290,13 +313,75 @@ def busqueda_lineal_imagen(conn, orquestador, ruta_imagen):
     return results
 
 
+def _linear_tfidf_scores(query_hist, word_idf, doc_norm, db_rows, k):
+    qw_map = {}
+    qn_sq = 0.0
+    for cid in np.nonzero(query_hist)[0]:
+        tf = float(query_hist[cid])
+        idf = word_idf.get(cid)
+        if idf is None or idf == 0.0:
+            continue
+        w = tf * idf
+        qw_map[cid] = w
+        qn_sq += w * w
+    qn = math.sqrt(qn_sq) if qn_sq > 0 else 1.0
+    if not qw_map:
+        return []
+
+    scores = {}
+    for doc_id, hvec in db_rows:
+        if not isinstance(hvec, np.ndarray):
+            hvec = np.array(hvec, dtype=np.float32) if hvec is not None else np.zeros(len(query_hist), dtype=np.float32)
+        d_norm = doc_norm.get(doc_id, 1.0) or 1.0
+        acc = 0.0
+        for cid, qw in qw_map.items():
+            tf = float(hvec[cid]) if cid < len(hvec) else 0.0
+            if tf > 0:
+                acc += qw * (tf * (word_idf.get(cid, 0.0) or 0.0))
+        s = acc / (d_norm * qn)
+        if s > 0:
+            scores[doc_id] = s
+
+    top = sorted(scores.items(), key=lambda x: -x[1])[:k]
+    return [doc_id for doc_id, _ in top]
+
+
+def busqueda_lineal_tfidf_texto(conn, orquestador, texto, tamano):
+    qhist = orquestador._text_histogram(texto)
+    d = BASE_DIR / "Multimodal" / "Data" / str(tamano)
+    with open(d / f"text_word_idf_{tamano}.pkl", "rb") as f:
+        widf = pickle.load(f)
+    with open(d / f"text_doc_norm_{tamano}.pkl", "rb") as f:
+        dnorm = pickle.load(f)
+    with conn.cursor() as cur:
+        cur.execute("SELECT doc_id, text_histogram FROM descriptors WHERE text_histogram IS NOT NULL")
+        rows = cur.fetchall()
+    return _linear_tfidf_scores(qhist, widf, dnorm, rows, TOP_K)
+
+
+def busqueda_lineal_tfidf_imagen(conn, orquestador, ruta_imagen, tamano):
+    qhist = orquestador._image_histogram(str(ruta_imagen))
+    d = BASE_DIR / "Multimodal" / "Data" / str(tamano)
+    with open(d / f"image_word_idf_{tamano}.pkl", "rb") as f:
+        widf = pickle.load(f)
+    with open(d / f"image_doc_norm_{tamano}.pkl", "rb") as f:
+        dnorm = pickle.load(f)
+    with conn.cursor() as cur:
+        cur.execute("SELECT doc_id, image_histogram FROM descriptors WHERE image_histogram IS NOT NULL")
+        rows = cur.fetchall()
+    return _linear_tfidf_scores(qhist, widf, dnorm, rows, TOP_K)
+
+
 def ejecutar_benchmark():
     from Backend.Multimodal.Online.Orquestador import OnlineOrchestrator
 
     conn = psycopg2.connect(**DB_CONFIG)
     conn.autocommit = True
+    register_vector(conn)
     resultados = []
     resultados_disco = []
+
+    sub_map = load_subcategory_map(STYLES_CSV)
 
     for tamano in TAMAÑOS:
         if not preparar_entorno(tamano, DB_CONFIG):
@@ -307,8 +392,6 @@ def ejecutar_benchmark():
         
         print(f"\nEvaluando Textos (Tamaño {tamano})")
         for q in QUERIES_TEXTO:
-            res_lineal = busqueda_lineal_texto(conn, orquestador, q)
-
             orquestador.reset_io_counters()
             ini = time.perf_counter()
             res_custom = orquestador.search_text(q, k=TOP_K)
@@ -316,22 +399,25 @@ def ejecutar_benchmark():
             io_spimi = orquestador.io_metrics()["disk_reads"]
 
             ini = time.perf_counter()
-            res_pg, io_pg = busqueda_nativa_texto(conn, q)
+            res_pg, io_pg = busqueda_gin_texto(conn, q)
             lat_pg = time.perf_counter() - ini
 
             ini = time.perf_counter()
             res_gist, io_gist = busqueda_gist_texto(conn, q)
             lat_gist = time.perf_counter() - ini
 
-            resultados.append({"tamano": tamano, "tipo": "Texto", "query": q, "motor": "Custom_SPIMI", "latencia": lat_custom, "throughput_qps": 1.0 / lat_custom if lat_custom > 0 else 0.0, "io": io_spimi, "recall": calcular_recall(res_custom, res_lineal)})
-            resultados.append({"tamano": tamano, "tipo": "Texto", "query": q, "motor": "Postgres_GIN", "latencia": lat_pg, "throughput_qps": 1.0 / lat_pg if lat_pg > 0 else 0.0, "io": io_pg, "recall": calcular_recall(res_pg, res_lineal)})
-            resultados.append({"tamano": tamano, "tipo": "Texto", "query": q, "motor": "Postgres_GiST", "latencia": lat_gist, "throughput_qps": 1.0 / lat_gist if lat_gist > 0 else 0.0, "io": io_gist, "recall": calcular_recall(res_gist, res_lineal)})
+            ini = time.perf_counter()
+            res_tfidf = busqueda_lineal_tfidf_texto(conn, orquestador, q, tamano)
+            lat_tfidf = time.perf_counter() - ini
+
+            resultados.append({"tamano": tamano, "tipo": "Texto", "query": q, "motor": "Custom_SPIMI", "latencia": lat_custom, "throughput_qps": 1.0 / lat_custom if lat_custom > 0 else 0.0, "io": io_spimi, "recall": calcular_recall_subcategory(res_custom, sub_map, TOP_K)})
+            resultados.append({"tamano": tamano, "tipo": "Texto", "query": q, "motor": "Postgres_GIN", "latencia": lat_pg, "throughput_qps": 1.0 / lat_pg if lat_pg > 0 else 0.0, "io": io_pg, "recall": calcular_recall_subcategory(res_pg, sub_map, TOP_K)})
+            resultados.append({"tamano": tamano, "tipo": "Texto", "query": q, "motor": "Postgres_GiST", "latencia": lat_gist, "throughput_qps": 1.0 / lat_gist if lat_gist > 0 else 0.0, "io": io_gist, "recall": calcular_recall_subcategory(res_gist, sub_map, TOP_K)})
+            resultados.append({"tamano": tamano, "tipo": "Texto", "query": q, "motor": "Linear_TFIDF", "latencia": lat_tfidf, "throughput_qps": 1.0 / lat_tfidf if lat_tfidf > 0 else 0.0, "io": 0, "recall": calcular_recall_subcategory(res_tfidf, sub_map, TOP_K)})
 
         print(f"\nEvaluando Imágenes (Tamaño {tamano})")
         for ruta_img in QUERY_IMAGENES:
             nombre_archivo = ruta_img.name
-
-            res_lineal = busqueda_lineal_imagen(conn, orquestador, ruta_img)
 
             orquestador.reset_io_counters()
             ini = time.perf_counter()
@@ -340,16 +426,21 @@ def ejecutar_benchmark():
             io_spimi = orquestador.io_metrics()["disk_reads"]
 
             ini = time.perf_counter()
-            res_pg, io_pg = busqueda_nativa_imagen(conn, orquestador, ruta_img)
+            res_pg, io_pg = busqueda_ivfflat_imagen(conn, orquestador, ruta_img)
             lat_pg = time.perf_counter() - ini
 
             ini = time.perf_counter()
             res_hnsw, io_hnsw = busqueda_hnsw_imagen(conn, orquestador, ruta_img)
             lat_hnsw = time.perf_counter() - ini
 
-            resultados.append({"tamano": tamano, "tipo": "Imagen", "query": "IMG_" + nombre_archivo, "motor": "Custom_SPIMI", "latencia": lat_custom, "throughput_qps": 1.0 / lat_custom if lat_custom > 0 else 0.0, "io": io_spimi, "recall": calcular_recall(res_custom, res_lineal)})
-            resultados.append({"tamano": tamano, "tipo": "Imagen", "query": "IMG_" + nombre_archivo, "motor": "Postgres_pgvector", "latencia": lat_pg, "throughput_qps": 1.0 / lat_pg if lat_pg > 0 else 0.0, "io": io_pg, "recall": calcular_recall(res_pg, res_lineal)})
-            resultados.append({"tamano": tamano, "tipo": "Imagen", "query": "IMG_" + nombre_archivo, "motor": "Postgres_HNSW", "latencia": lat_hnsw, "throughput_qps": 1.0 / lat_hnsw if lat_hnsw > 0 else 0.0, "io": io_hnsw, "recall": calcular_recall(res_hnsw, res_lineal)})
+            ini = time.perf_counter()
+            res_tfidf = busqueda_lineal_tfidf_imagen(conn, orquestador, ruta_img, tamano)
+            lat_tfidf = time.perf_counter() - ini
+
+            resultados.append({"tamano": tamano, "tipo": "Imagen", "query": "IMG_" + nombre_archivo, "motor": "Custom_SPIMI", "latencia": lat_custom, "throughput_qps": 1.0 / lat_custom if lat_custom > 0 else 0.0, "io": io_spimi, "recall": calcular_recall_subcategory(res_custom, sub_map, TOP_K)})
+            resultados.append({"tamano": tamano, "tipo": "Imagen", "query": "IMG_" + nombre_archivo, "motor": "Postgres_IVFFlat", "latencia": lat_pg, "throughput_qps": 1.0 / lat_pg if lat_pg > 0 else 0.0, "io": io_pg, "recall": calcular_recall_subcategory(res_pg, sub_map, TOP_K)})
+            resultados.append({"tamano": tamano, "tipo": "Imagen", "query": "IMG_" + nombre_archivo, "motor": "Postgres_HNSW", "latencia": lat_hnsw, "throughput_qps": 1.0 / lat_hnsw if lat_hnsw > 0 else 0.0, "io": io_hnsw, "recall": calcular_recall_subcategory(res_hnsw, sub_map, TOP_K)})
+            resultados.append({"tamano": tamano, "tipo": "Imagen", "query": "IMG_" + nombre_archivo, "motor": "Linear_TFIDF", "latencia": lat_tfidf, "throughput_qps": 1.0 / lat_tfidf if lat_tfidf > 0 else 0.0, "io": 0, "recall": calcular_recall_subcategory(res_tfidf, sub_map, TOP_K)})
 
         orquestador.close()
 
@@ -364,7 +455,7 @@ def ejecutar_benchmark():
 
     print("Guardando métricas de disco...")
     with open(resultados_dir / "resultados_disco.csv", "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["tamano", "spimi_texto_mb", "postgre_texto_mb", "spimi_imagen_mb", "postgre_imagen_mb"])
+        writer = csv.DictWriter(f, fieldnames=["tamano", "spimi_texto_mb", "gin_mb", "gist_mb", "spimi_imagen_mb", "ivfflat_mb", "hnsw_mb"])
         writer.writeheader()
         writer.writerows(resultados_disco)
     print(f"  Disco guardado en: {resultados_dir / 'resultados_disco.csv'}")
@@ -384,50 +475,59 @@ def generar_graficos(resultados):
         for metrica in ["latencia", "throughput_qps", "io", "recall"]:
             agg[key][metrica].append(r[metrica])
 
-
     proms: dict[tuple, dict] = {}
     for key, vals in agg.items():
         proms[key] = {k: sum(v)/len(v) for k, v in vals.items() if v}
 
+    with open(resultados_dir / "promedios.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["tamano", "motor", "tipo", "latencia_prom", "throughput_qps_prom", "io_prom", "recall_prom"])
+        for (tamano, motor, tipo), vals in sorted(proms.items()):
+            w.writerow([tamano, motor, tipo, vals.get("latencia", ""), vals.get("throughput_qps", ""), vals.get("io", ""), vals.get("recall", "")])
+    print(f"  Promedios guardados en: promedios.csv")
+
     sizes = sorted(set(r["tamano"] for r in resultados))
 
-    series = [
-        ("Custom_SPIMI", "Texto", "SPIMI Texto", "o-", "tab:blue"),
-        ("Custom_SPIMI", "Imagen", "SPIMI Imagen", "s-", "tab:orange"),
-        ("Postgres_GIN", "Texto", "PostgreSQL Texto", "o--", "tab:green"),
-        ("Postgres_GiST", "Texto", "PostgreSQL GiST", "^--", "tab:purple"),
-        ("Postgres_pgvector", "Imagen", "PostgreSQL Imagen", "s--", "tab:red"),
-        ("Postgres_HNSW", "Imagen", "PostgreSQL HNSW", "D--", "tab:brown"),
+    configs = [
+        ("Texto", [
+            ("Custom_SPIMI", "Texto", "SPIMI Texto", "o--", "tab:blue"),
+            ("Postgres_GIN", "Texto", "PostgreSQL GIN", "o-", "tab:green"),
+            ("Postgres_GiST", "Texto", "PostgreSQL GiST", "^-", "tab:purple"),
+            ("Linear_TFIDF", "Texto", "Linear TF-IDF", "v:", "tab:cyan"),
+        ]),
+        ("Imagen", [
+            ("Custom_SPIMI", "Imagen", "SPIMI Imagen", "s--", "tab:orange"),
+            ("Postgres_IVFFlat", "Imagen", "PostgreSQL IVFFlat", "s-", "tab:red"),
+            ("Postgres_HNSW", "Imagen", "PostgreSQL HNSW", "D-", "tab:brown"),
+            ("Linear_TFIDF", "Imagen", "Linear TF-IDF", "P:", "tab:cyan"),
+        ]),
     ]
 
-    graficos = [
-        ("latencia", "Latencia (s)", "Comparativa de Latencia al escalar la BD", ["SPIMI Texto", "SPIMI Imagen", "PostgreSQL Texto", "PostgreSQL GiST", "PostgreSQL Imagen", "PostgreSQL HNSW"]),
-        ("throughput_qps", "QPS", "Throughput (Consultas por segundo)", ["SPIMI Texto", "SPIMI Imagen", "PostgreSQL Texto", "PostgreSQL GiST", "PostgreSQL Imagen", "PostgreSQL HNSW"]),
-        ("io", "Bloques I/O", "Bloques Leídos del Disco (Accesos I/O)", ["SPIMI Texto", "SPIMI Imagen", "PostgreSQL Texto", "PostgreSQL GiST", "PostgreSQL Imagen", "PostgreSQL HNSW"]),
-        ("recall", "Recall", "Precisión de Recuperación vs Búsqueda Lineal", ["SPIMI Texto", "SPIMI Imagen", "PostgreSQL Texto", "PostgreSQL GiST", "PostgreSQL Imagen", "PostgreSQL HNSW"]),
-    ]
-
-    for metrica, ylabel, titulo, incluir in graficos:
-        fig, ax = plt.subplots(figsize=(8, 5))
-        for motor, tipo, label, ls, color in series:
-            if label not in incluir:
-                continue
-            vals = []
-            for s in sizes:
-                key = (s, motor, tipo)
-                v = proms.get(key, {}).get(metrica, None)
-                vals.append(v if v is not None else 0)
-            ax.plot(sizes, vals, ls, color=color, label=label, linewidth=2, markersize=8)
-        ax.set_xlabel("Volumen del Dataset (documentos)")
-        ax.set_ylabel(ylabel)
-        ax.set_title(titulo)
-        ax.legend()
-        ax.grid(True, linestyle=":", alpha=0.7)
-        fig.tight_layout()
-        safe = metrica.replace("/", "_")
-        fig.savefig(resultados_dir / f"grafico_{safe}.png", dpi=150)
-        plt.close(fig)
-        print(f"  Gráfico guardado: grafico_{safe}.png")
+    for metrica, ylabel, titulo_base in [
+        ("latencia", "Latencia (s)", "Latencia"),
+        ("throughput_qps", "QPS", "Throughput"),
+        ("io", "Bloques I/O", "Lecturas de Disco"),
+        ("recall", "Recall", "Recall por Subcategoría"),
+    ]:
+        for tipo, series in configs:
+            fig, ax = plt.subplots(figsize=(8, 5))
+            for motor, t, label, ls, color in series:
+                vals = []
+                for s in sizes:
+                    key = (s, motor, t)
+                    v = proms.get(key, {}).get(metrica, None)
+                    vals.append(v if v is not None else 0)
+                ax.plot(sizes, vals, ls, color=color, label=label, linewidth=2, markersize=8)
+            ax.set_xlabel("Volumen del Dataset (documentos)")
+            ax.set_ylabel(ylabel)
+            ax.set_title(f"{titulo_base} - {tipo}")
+            ax.legend()
+            ax.grid(True, linestyle=":", alpha=0.7)
+            fig.tight_layout()
+            safe = metrica.replace("/", "_")
+            fig.savefig(resultados_dir / f"grafico_{safe}_{tipo.lower()}.png", dpi=150)
+            plt.close(fig)
+            print(f"  Gráfico guardado: grafico_{safe}_{tipo.lower()}.png")
 
 
 def generar_grafico_disco(resultados_disco):
@@ -435,22 +535,26 @@ def generar_grafico_disco(resultados_disco):
     sizes = [r["tamano"] for r in resultados_disco]
 
     spimi_texto = [r["spimi_texto_mb"] for r in resultados_disco]
-    postgre_texto = [r["postgre_texto_mb"] for r in resultados_disco]
+    gin = [r["gin_mb"] for r in resultados_disco]
+    gist = [r["gist_mb"] for r in resultados_disco]
     spimi_imagen = [r["spimi_imagen_mb"] for r in resultados_disco]
-    postgre_imagen = [r["postgre_imagen_mb"] for r in resultados_disco]
+    ivfflat = [r["ivfflat_mb"] for r in resultados_disco]
+    hnsw = [r["hnsw_mb"] for r in resultados_disco]
 
     x = range(len(sizes))
-    width = 0.18
+    width = 0.13
 
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.bar([i - 1.5 * width for i in x], spimi_texto, width, label="SPIMI Texto", color="tab:blue")
-    ax.bar([i - 0.5 * width for i in x], postgre_texto, width, label="PostgreSQL Texto", color="tab:green")
+    fig, ax = plt.subplots(figsize=(11, 5))
+    ax.bar([i - 2.5 * width for i in x], spimi_texto, width, label="SPIMI Texto", color="tab:blue")
+    ax.bar([i - 1.5 * width for i in x], gin, width, label="PostgreSQL GIN", color="tab:green")
+    ax.bar([i - 0.5 * width for i in x], gist, width, label="PostgreSQL GiST", color="tab:purple")
     ax.bar([i + 0.5 * width for i in x], spimi_imagen, width, label="SPIMI Imagen", color="tab:orange")
-    ax.bar([i + 1.5 * width for i in x], postgre_imagen, width, label="PostgreSQL Imagen", color="tab:red")
+    ax.bar([i + 1.5 * width for i in x], ivfflat, width, label="PostgreSQL IVFFlat", color="tab:red")
+    ax.bar([i + 2.5 * width for i in x], hnsw, width, label="PostgreSQL HNSW", color="tab:brown")
 
     ax.set_xlabel("Volumen del Dataset (documentos)")
     ax.set_ylabel("Tamaño en Disco (MB)")
-    ax.set_title("Uso de Disco por Motor de Búsqueda")
+    ax.set_title("Uso de Disco por Índice")
     ax.set_xticks(list(x))
     ax.set_xticklabels([str(s) for s in sizes])
     ax.legend()
