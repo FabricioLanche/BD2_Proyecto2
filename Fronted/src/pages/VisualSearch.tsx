@@ -163,16 +163,20 @@ export default function VisualSearch() {
                   {metrics.query_ms.toFixed(1)} ms
                 </span>
                 <span className="inline-flex items-center gap-1 font-code text-[11px] text-on-surface-variant/50 bg-surface-container px-2.5 py-1 rounded-full">
-                  <span className="material-symbols-outlined text-[13px]">storage</span>
-                  {metrics.page_requests} page req
+                  <span className="material-symbols-outlined text-[13px]">database</span>
+                  {metrics.page_requests} páginas accedidas
                 </span>
                 <span className="inline-flex items-center gap-1 font-code text-[11px] text-on-surface-variant/50 bg-surface-container px-2.5 py-1 rounded-full">
                   <span className="material-symbols-outlined text-[13px]">memory</span>
-                  {metrics.cache_hits} cache hits
+                  {metrics.cache_hits} hits en caché
                 </span>
                 <span className="inline-flex items-center gap-1 font-code text-[11px] text-on-surface-variant/50 bg-surface-container px-2.5 py-1 rounded-full">
-                  <span className="material-symbols-outlined text-[13px]">database</span>
-                  {metrics.disk_reads} reads / {metrics.disk_writes} writes
+                  <span className="material-symbols-outlined text-[13px]">storage</span>
+                  {metrics.disk_reads} lecturas / {metrics.disk_writes} escrituras
+                </span>
+                <span className="inline-flex items-center gap-1 font-code text-[11px] text-on-surface-variant/50 bg-surface-container px-2.5 py-1 rounded-full">
+                  <span className="material-symbols-outlined text-[13px]">schedule</span>
+                  {metrics.disk_read_ms.toFixed(1)} ms lectura / {metrics.disk_write_ms.toFixed(1)} ms escritura
                 </span>
               </div>
             )}

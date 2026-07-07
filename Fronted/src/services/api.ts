@@ -79,13 +79,14 @@ async function enrichResults(results: SearchResult[]): Promise<ProductCardData[]
 export async function visualSearch(
   image: File,
   topK = 10,
-  _searchType?: string
+  searchType?: string
 ): Promise<EnrichedResult> {
   const formData = new FormData()
   formData.append('image', image)
   formData.append('top_k', String(topK))
 
-  const res = await fetch(`${API_BASE}/visual`, {
+  const params = searchType ? `?search_type=${searchType}` : ''
+  const res = await fetch(`${API_BASE}/visual${params}`, {
     method: 'POST',
     body: formData,
   })
@@ -101,7 +102,7 @@ export async function multimodalSearch(
   weightVisual: number,
   weightText: number,
   topK = 10,
-  _searchType?: string
+  searchType?: string
 ): Promise<EnrichedResult> {
   const formData = new FormData()
   if (image) formData.append('image', image)
@@ -110,7 +111,8 @@ export async function multimodalSearch(
   formData.append('weight_text', String(weightText))
   formData.append('top_k', String(topK))
 
-  const res = await fetch(`${API_BASE}/multimodal`, {
+  const params = searchType ? `?search_type=${searchType}` : ''
+  const res = await fetch(`${API_BASE}/multimodal${params}`, {
     method: 'POST',
     body: formData,
   })
