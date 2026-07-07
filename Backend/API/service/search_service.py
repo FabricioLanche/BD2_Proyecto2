@@ -34,30 +34,62 @@ class SearchService:
             self._orchestrator = OnlineOrchestrator(self._db_config, n_documents=self._n_documents)
         return self._orchestrator
 
-    def execute_visual_search(self, image_bytes: bytes, top_k: int) -> list[dict]:
+    def execute_visual_search(
+        self, 
+        image_bytes: bytes, 
+        top_k: int, 
+        search_type: str = "spimi"
+    ) -> dict:
+        
+        self.orchestrator.reset_io_counters()
         img = self._decode_image(image_bytes)
-        raw_results = self.orchestrator.search_image(img, k=top_k)
-        return self._format_search_results(raw_results)
+        
+        if search_type in ["postgres"]:
+            resultados, metrics = self.orchestrator.search_postgres(
+                text_query="", 
+                image=img, 
+                k=top_k, 
+            )
+            resultados = self._format_search_results(resultados)
+            return {"results": resultados, "metrics": metrics}
+            
+        else:
+            raw_results = self.orchestrator.search_image(img, k=top_k)
+            resultados = self._format_search_results(raw_results)
+            metrics = self.orchestrator.io_metrics()
+            
+            return {"results": resultados, "metrics": metrics}
 
     def execute_multimodal_search(
-        self,
-        image_bytes: Optional[bytes],
-        text_query: str,
-        weight_visual: float,
-        weight_text: float,
-        top_k: int,
-    ) -> list[dict]:
+        self, image_bytes: Optional[bytes], text_query: str, weight_visual: float, weight_text: float, top_k: int, search_type: str = "spimi"
+    ) -> dict:
+        
+        text_query = text_query.strip()
         img = self._decode_image(image_bytes) if image_bytes else None
-        if img is not None and text_query:
-            raw_results = self.orchestrator.search_multimodal(
-                text_query, img, text_weight=weight_text, image_weight=weight_visual, k=top_k
+        
+        if search_type in ["postgres"]:
+            resultados, metrics = self.orchestrator.search_postgres(
+                text_query, img, weight_text, weight_visual, top_k
             )
-        elif img is not None:
-            raw_results = self.orchestrator.search_image(img, k=top_k)
-        else:
-            raw_results = self.orchestrator.search_text(text_query, k=top_k)
+            resultados = self._format_search_results(resultados)
+            return {"results": resultados, "metrics": metrics}
             
-        return self._format_search_results(raw_results)
+        else:
+            self.orchestrator.reset_io_counters()
+            
+            if img is not None and text_query:
+                raw_results = self.orchestrator.search_multimodal(text_query, img, weight_text, weight_visual, top_k)
+            elif img is not None:
+                raw_results = self.orchestrator.search_image(img, k=top_k)
+            elif text_query:
+                raw_results = self.orchestrator.search_text(text_query, k=top_k)
+            else:
+                raw_results = []
+                
+            resultados = self._format_search_results(raw_results)
+            metrics = self.orchestrator.io_metrics()
+            
+            return {"results": resultados, "metrics": metrics}
 
     def close(self) -> None:
         if self._orchestrator is not None:
@@ -71,7 +103,8 @@ class SearchService:
             formatted.append({
                 "id": str(r["doc_id"]),
                 "name": r.get("product_name") or "Unknown",
-                "match_percentage": f"{int(r['score'] * 100)}%"
+                "match_percentage": f"{int(r['score'] * 100)}%",
+                "image_url": r.get("url") or ""
             })
         return formatted
 

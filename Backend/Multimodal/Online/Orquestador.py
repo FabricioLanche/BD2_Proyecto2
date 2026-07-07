@@ -226,7 +226,168 @@ class OnlineOrchestrator:
 
     def io_metrics(self) -> dict:
         return self.search.io_metrics()
+    
+    def search_postgres(
+        self, 
+        text_query: str, 
+        image: Union[str, np.ndarray, None], 
+        text_weight: float = 0.5, 
+        image_weight: float = 0.5, 
+        k: int = 10, 
+        sequential: bool = False
+    ) -> Tuple[List[dict], dict]:
+        import time
+        t0 = time.perf_counter()
+        
+        io_reads = 0
+        io_hits = 0
+        io_writes = 0
+        io_read_ms = 0.0
+        io_write_ms = 0.0
+        tiempo_perdido_explain = 0.0
+        pg_exec_time_ms = 0.0
+        
+        has_text = bool(text_query)
+        has_image = image is not None
+        
+        vector_string = None
+        if has_image:
+            vector_img = self._image_histogram(image)
+            vector_string = f"[{','.join(map(str, vector_img))}]"
+            
+        resultados_crudos = []
+        
+        with self.conn.cursor() as cursor:
+            cursor.execute("SET track_io_timing = ON;")
+            
+            if sequential:
+                cursor.execute("SET LOCAL enable_indexscan = OFF;")
+                cursor.execute("SET LOCAL enable_bitmapscan = OFF;")
+            
+            def recolectar_metricas(explicacion_json):
+                nonlocal io_reads, io_hits, io_writes, io_read_ms, io_write_ms, pg_exec_time_ms
+                plan = explicacion_json.get("Plan", {})
+                io_reads += plan.get("Shared Read Blocks", 0)
+                io_hits += plan.get("Shared Hit Blocks", 0)
+                io_writes += plan.get("Shared Written Blocks", 0) + plan.get("Temp Written Blocks", 0)
+                io_read_ms += plan.get("I/O Read Time", 0.0)
+                io_write_ms += plan.get("I/O Write Time", 0.0)
+                pg_exec_time_ms += explicacion_json.get("Planning Time", 0.0)
+                pg_exec_time_ms += explicacion_json.get("Execution Time", 0.0)
 
+            if has_text and has_image:
+                t_ex = time.perf_counter()
+                query_explicar_txt = """
+                    EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) 
+                    SELECT doc_id FROM descriptors 
+                    WHERE texto_vector @@ plainto_tsquery('english', %s) 
+                    ORDER BY ts_rank(texto_vector, plainto_tsquery('english', %s)) DESC 
+                    LIMIT 1000;
+                """
+                cursor.execute(query_explicar_txt, (text_query, text_query))
+                recolectar_metricas(cursor.fetchone()[0][0])
+                tiempo_perdido_explain += (time.perf_counter() - t_ex)
+                
+                query_real_txt = """
+                    SELECT doc_id, ts_rank(texto_vector, plainto_tsquery('english', %s)) as score 
+                    FROM descriptors 
+                    WHERE texto_vector @@ plainto_tsquery('english', %s) 
+                    ORDER BY score DESC 
+                    LIMIT 1000;
+                """
+                cursor.execute(query_real_txt, (text_query, text_query))
+                res_txt = {row[0]: row[1] for row in cursor.fetchall()}
+                
+                t_ex = time.perf_counter()
+                query_explicar_img = """
+                    EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) 
+                    SELECT doc_id FROM descriptors 
+                    ORDER BY image_histogram <=> %s::vector 
+                    LIMIT 1000;
+                """
+                cursor.execute(query_explicar_img, (vector_string,))
+                recolectar_metricas(cursor.fetchone()[0][0])
+                tiempo_perdido_explain += (time.perf_counter() - t_ex)
+                
+                query_real_img = """
+                    SELECT doc_id, 1 - (image_histogram <=> %s::vector) as score 
+                    FROM descriptors 
+                    ORDER BY image_histogram <=> %s::vector 
+                    LIMIT 1000;
+                """
+                cursor.execute(query_real_img, (vector_string, vector_string))
+                res_img = {row[0]: row[1] for row in cursor.fetchall()}
+                
+                res_txt_norm = self.search._normalize_scores(res_txt)
+                res_img_norm = self.search._normalize_scores(res_img)
+                
+                combined = {}
+                for doc_id, s in res_txt_norm.items():
+                    combined[doc_id] = combined.get(doc_id, 0.0) + (s * text_weight)
+                for doc_id, s in res_img_norm.items():
+                    combined[doc_id] = combined.get(doc_id, 0.0) + (s * image_weight)
+                
+                resultados_crudos = [(-s, doc_id) for doc_id, s in combined.items()]
+
+            elif has_text:
+                t_ex = time.perf_counter()
+                query_explicar = """
+                    EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) 
+                    SELECT doc_id FROM descriptors 
+                    WHERE texto_vector @@ plainto_tsquery('english', %s) 
+                    ORDER BY ts_rank(texto_vector, plainto_tsquery('english', %s)) DESC 
+                    LIMIT %s;
+                """
+                cursor.execute(query_explicar, (text_query, text_query, k))
+                recolectar_metricas(cursor.fetchone()[0][0])
+                tiempo_perdido_explain += (time.perf_counter() - t_ex)
+                
+                query_real = """
+                    SELECT doc_id, ts_rank(texto_vector, plainto_tsquery('english', %s)) as score 
+                    FROM descriptors 
+                    WHERE texto_vector @@ plainto_tsquery('english', %s) 
+                    ORDER BY score DESC 
+                    LIMIT %s;
+                """
+                cursor.execute(query_real, (text_query, text_query, k))
+                resultados_crudos = [(-row[1], row[0]) for row in cursor.fetchall()]
+
+            elif has_image:
+                t_ex = time.perf_counter()
+                query_explicar = """
+                    EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) 
+                    SELECT doc_id FROM descriptors 
+                    ORDER BY image_histogram <=> %s::vector 
+                    LIMIT 1000;
+                """
+                cursor.execute(query_explicar, (vector_string,))
+                recolectar_metricas(cursor.fetchone()[0][0])
+                tiempo_perdido_explain += (time.perf_counter() - t_ex)
+                
+                query_real = """
+                    SELECT doc_id, 1 - (image_histogram <=> %s::vector) as score 
+                    FROM descriptors 
+                    ORDER BY image_histogram <=> %s::vector 
+                    LIMIT 1000;
+                """
+                cursor.execute(query_real, (vector_string, vector_string))
+                res_img = {row[0]: row[1] for row in cursor.fetchall()}
+                res_norm = self.search._normalize_scores(res_img)
+                resultados_crudos = [(-s, doc_id) for doc_id, s in res_norm.items()]
+
+        query_time_ms = round(pg_exec_time_ms, 3)
+        metrics = {
+            "page_requests": io_hits + io_reads,
+            "cache_hits": io_hits,
+            "disk_reads": io_reads,
+            "disk_writes": io_writes,
+            "disk_read_ms": round(io_read_ms, 3),
+            "disk_write_ms": round(io_write_ms, 3),
+            "query_ms": query_time_ms
+        }
+        
+        resultados_finales = self._format(resultados_crudos, k)
+        return resultados_finales, metrics
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Orquestador online multimodal")

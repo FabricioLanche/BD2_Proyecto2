@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException, Query 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -19,10 +19,11 @@ async def visual_search(
     request: Request,
     image: UploadFile = File(...),
     top_k: int = Form(10),
+    search_type: str = Query("spimi", description="Tipos: spimi, postgres")
 ):
     image_bytes = await image.read()
-    results = _svc(request).execute_visual_search(image_bytes, top_k)
-    return {"results": results}
+    response_data = _svc(request).execute_visual_search(image_bytes, top_k, search_type)
+    return response_data
 
 
 @router.post("/multimodal")
@@ -30,15 +31,20 @@ async def multimodal_search(
     request: Request,
     image: UploadFile = File(None),
     text_query: str = Form(""),
-    weight_visual: float = Form(0.6),
-    weight_text: float = Form(0.4),
+    weight_visual: float = Form(60),
+    weight_text: float = Form(40),
     top_k: int = Form(10),
+    search_type: str = Query("spimi", description="Tipos: spimi, postgres")
 ):
     image_bytes = await image.read() if image else None
-    results = _svc(request).execute_multimodal_search(
-        image_bytes, text_query, weight_visual / 100.0, weight_text / 100.0, top_k
+
+    w_vis = weight_visual / 100.0 if weight_visual > 1.0 else weight_visual
+    w_txt = weight_text / 100.0 if weight_text > 1.0 else weight_text
+
+    response_data  = _svc(request).execute_multimodal_search(
+        image_bytes, text_query, w_vis, w_txt, top_k, search_type
     )
-    return {"results": results}
+    return response_data
 
 
 @router.get("/details/{doc_id}")
