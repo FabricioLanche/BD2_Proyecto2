@@ -22,14 +22,25 @@ const sections = [
     ],
   },
   {
+    icon: 'toggle_off',
+    title: 'Modo de búsqueda',
+    subtitle: 'SPIMI vs Postgres',
+    steps: [
+      'Usa el selector "Search mode" en la parte superior de cualquier pantalla de búsqueda.',
+      'Selecciona Postgres para búsqueda con pgvector (más rápido, usa índices de PostgreSQL).',
+      'Selecciona SPIMI para búsqueda con índices invertidos propios (B+Tree, heap).',
+      'El cambio es inmediato — no necesitas recargar la página ni re-subir la imagen.',
+    ],
+  },
+  {
     icon: 'touch_app',
     title: 'Interactuar con resultados',
-    subtitle: 'Tarjetas de producto y paginación',
+    subtitle: 'Tarjetas, paginación y métricas',
     steps: [
       'Cada tarjeta muestra una miniatura, categoría y porcentaje de coincidencia.',
       'Haz clic en una tarjeta para abrir el modal con todos los metadatos del producto.',
-      'Usa los controles de paginación en la parte inferior para navegar entre páginas.',
-      'Presiona Escape o haz clic fuera del modal para cerrarlo.',
+      'Usa los controles de paginación para navegar entre páginas. Las tarjetas se reorganizan según el ancho de pantalla.',
+      'Tras cada búsqueda se muestran métricas: tiempo de consulta, páginas accedidas, hits en caché, lecturas/escrituras de disco y tiempos de I/O.',
     ],
   },
 ]
@@ -88,6 +99,8 @@ export default function UserManual() {
                 'Usa fotos con buena iluminación y la prenda bien visible para mejores resultados.',
                 'En "Find your look", combina imagen y texto para búsquedas más precisas.',
                 'El slider de fusión permite dar más importancia a la imagen o al texto según tu necesidad.',
+                'Prueba cambiar entre SPIMI y Postgres para comparar velocidad y resultados.',
+                'Las métricas de I/O te ayudan a entender el rendimiento de cada motor de búsqueda.',
                 'Haz clic en cualquier producto para ver sus atributos detallados.',
               ].map((tip, i) => (
                 <li key={i} className="flex gap-2 font-body-md text-body-md text-on-surface-variant/80">

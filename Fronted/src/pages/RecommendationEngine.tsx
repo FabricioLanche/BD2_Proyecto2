@@ -4,7 +4,7 @@ import ProductCard, { type ProductCardData } from '../components/ProductCard'
 import DetailModal from '../components/DetailModal'
 import SearchModeSelector from '../components/SearchModeSelector'
 import { useState, useEffect } from 'react'
-import { multimodalSearch, type SearchMetrics } from '../services/api'
+import { multimodalSearch, getProductDetails, type SearchMetrics } from '../services/api'
 
 function useItemsPerPage(): number {
   const [items, setItems] = useState(() => {
@@ -88,6 +88,29 @@ export default function RecommendationEngine() {
   }
 
   useEffect(() => { setPage(1) }, [results.length, perPage])
+
+  const handleProductClick = async (product: ProductCardData) => {
+    const details = await getProductDetails(product.id)
+    if (details) {
+      setSelectedProduct({
+        ...product,
+        title: details.name,
+        category: details.category,
+        imageUrl: details.image_url,
+        gender: details.details.gender,
+        masterCategory: details.category,
+        subCategory: details.details.subcategory,
+        articleType: details.details.type,
+        baseColour: details.details.colour,
+        season: details.details.season,
+        year: details.details.year ? parseInt(details.details.year) : undefined,
+        usage: details.details.usage,
+        productDisplayName: details.name,
+      })
+    } else {
+      setSelectedProduct(product)
+    }
+  }
 
   const disabled = loading || (!imageFile && !textQuery.trim())
 
@@ -269,7 +292,7 @@ export default function RecommendationEngine() {
                 {Array.from({ length: totalPages }, (_, i) => (
                   <div key={i} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-stack-md min-w-0 flex-[0_0_100%]">
                     {results.slice(i * perPage, (i + 1) * perPage).map((product) => (
-                      <ProductCard key={product.id} product={product} onClick={setSelectedProduct} />
+                      <ProductCard key={product.id} product={product} onClick={handleProductClick} />
                     ))}
                   </div>
                 ))}

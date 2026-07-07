@@ -1,6 +1,6 @@
 # BD2 Proyecto 2 — Motor de Búsqueda Multimodal
 
-Sistema de búsqueda de productos de moda usando **imágenes** y **texto**, con un motor propio basado en índices invertidos y codebooks visuales/textuales.
+Sistema de búsqueda de productos de moda usando **imágenes** y **texto**, con un motor propio basado en índices invertidos y codebooks visuales/textuales. Implementa dos modos de búsqueda: **Postgres (pgvector)** y **SPIMI** (índice propio).
 
 ---
 
@@ -12,91 +12,82 @@ Sistema de búsqueda de productos de moda usando **imágenes** y **texto**, con 
 
 ---
 
-## Levantar el sistema
+## Instalación
 
 ```bash
-# Desde la raíz del proyecto
-docker compose build
-docker compose up -d
-```
+# 1. Extraer datos pre-generados (codebooks, índices, dumps)
+#    Omite el pipeline offline que tarda ~45 min.
+cd Backend/Multimodal/Data
+tar -xf date_gen.zip    # Linux/Mac
+# o descomprimir con 7-Zip / WinRAR en Windows
+cd ../../..
 
-Esto levanta tres servicios:
+# 2. Iniciar servicios
+docker compose up --build -d
 
-| Servicio    | Puerto | Descripción                                     |
-|-------------|--------|-------------------------------------------------|
-| **db**      | `5432` | PostgreSQL 16 + pgvector                        |
-| **backend** | `8000` | FastAPI — motor de búsqueda multimodal           |
-| **frontend**| `5173` | Vite + React — interfaz web                     |
-
-Para verificar que todo esta listo:
-
-```bash
+# 3. Verificar que los 3 contenedores estén "Up" y "Healthy"
 docker ps
-# Deberías ver 3 contenedores con estado "Up" y "Healthy"
 ```
+
+| Servicio    | Puerto | Descripción                               |
+|-------------|--------|-------------------------------------------|
+| **db**      | `5432` | PostgreSQL 16 + pgvector                  |
+| **backend** | `8000` | FastAPI — motor de búsqueda multimodal     |
+| **frontend**| `5173` | Vite + React — interfaz web               |
 
 ---
 
-## Acceder a la aplicación
+## Acceder
 
 - **Frontend:** [http://localhost:5173](http://localhost:5173)
-- **Backend (API):** [http://localhost:8000](http://localhost:8000)
-- **Health check:** [http://localhost:8000/](http://localhost:8000/)
+- **API:** [http://localhost:8000](http://localhost:8000)
+- **Health:** [http://localhost:8000/](http://localhost:8000/)
 
 ---
 
 ## Cómo usar
 
-### 1. Búsqueda Visual
+### Búsqueda Visual
+Pestaña **"Shop by photo"** — sube una foto, ajusta resultados (10–50) y haz clic en **"Search looks"**. Los resultados muestran % de similitud.
 
-En la pestaña **"Shop by photo"**:
+### Búsqueda Multimodal (Texto + Imagen)
+Pestaña **"Find your look"** — sube una foto (opcional), escribe una descripción y usa el slider para priorizar texto o imagen.
 
-1. Arrastra una foto de producto o haz clic para seleccionar una
-2. Ajusta el número de resultados deseado (10–50)
-3. Haz clic en **"Search looks"**
-4. Los resultados se muestran con un porcentaje de similitud
-5. Haz clic en cualquier producto para ver detalles
+### Toggle SPIMI / Postgres
+En cualquier búsqueda puedes cambiar entre **Postgres** (pgvector, más rápido) y **SPIMI** (índice invertido propio) usando el selector en la parte superior.
 
-### 2. Búsqueda Multimodal (Texto + Imagen)
-
-En la pestaña **"Find your look"**:
-
-1. Sube una foto (opcional)
-2. Escribe una descripción textual (ej. *"oversized cream linen blazer"*)
-3. Ajusta el peso de búsqueda con el slider: mueve hacia **texto** o **imagen** según quieras priorizar
-4. Haz clic en **"Search looks"**
-5. Los resultados combinan ambas modalidades según el peso elegido
-
-## Notas importantes
-
-- **Dataset size:** Por defecto se usa `DATASET_SIZE=40000`. Si cambias este valor, el entrypoint podría ejecutar el pipeline offline la primera vez (depende del valor brindado, actualmente soporta para: 1000, 10000, 20000, 30000 y 40000).
-- **Datos de imágenes:** Las imágenes de los productos no están incluidas en el repositorio. El sistema usa URLs externas para mostrarlas en los resultados.
-- **Sin conexión a internet:** El frontend necesita carga inicial de assets vía CDN (Vite, Google Fonts, Material Symbols).
+### Métricas
+Tras cada búsqueda se muestran: tiempo de consulta, páginas accedidas, hits en caché, lecturas/escrituras de disco, y tiempo de I/O.
 
 ---
 
-## Estructura del proyecto
+## Dataset
+
+| Variable         |  Opciones                |
+|------------------|-------------------------|
+| `DATASET_SIZE`   | 1000, 10000, 20000, 30000, 40000 |
+
+Los datos pre-generados incluyen índices SPIMI (B+Tree + heap), codebooks visuales/textuales, y el dump CSV con descriptores. Si el directorio `Backend/Multimodal/Data/{size}` no existe al arrancar, el entrypoint ejecuta el pipeline offline automáticamente. Las imágenes se cargan por URL externa.
+
+---
+
+## Estructura
 
 ```
 BD2_Proyecto2/
-├── docker-compose.yml          # Orquestación de servicios
+├── docker-compose.yml
 ├── Backend/
-│   ├── API/                    # FastAPI (endpoints REST)
-│   │   ├── main.py             # Punto de entrada
-│   │   ├── controller/         # Rutas (/api/visual, /api/multimodal, /api/details)
-│   │   ├── service/            # Lógica de búsqueda
-│   │   ├── entrypoint.sh       # Script de inicio del contenedor
-│   │   └── init_db.py          # Inicialización de BD
-│   └── Multimodal/
-│       ├── Online/             # Motor de búsqueda en línea
-│       ├── Offline/            # Pipeline de indexación offline
-│       ├── Utils/              # B+Tree, Hash Extensible, Buffer Manager
-│       └── Data/               # Codebooks, índices y dumps CSV
+│   ├── API/              # FastAPI — endpoints REST
+│   ├── Multimodal/
+│   │   ├── Online/       # Motores Postgres + SPIMI
+│   │   ├── Offline/      # Pipeline de indexación
+│   │   ├── Utils/        # B+Tree, Hash Extensible, Buffer Manager
+│   │   └── Data/         # Codebooks, índices, CSVs, date_gen.zip
+│   └── ...
 ├── Fronted/
-│   ├── src/
-│   │   ├── pages/              # VisualSearch, RecommendationEngine
-│   │   ├── components/         # ProductCard, UploadZone, FusionSlider
-│   │   └── services/api.ts     # Llamadas al backend
+│   ├── src/pages/        # VisualSearch, RecommendationEngine
+│   ├── src/components/   # ProductCard, UploadZone, FusionSlider
+│   ├── src/services/     # api.ts — llamadas al backend
 │   └── Dockerfile
 └── README.md
 ```

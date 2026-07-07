@@ -3,7 +3,7 @@ import UploadZone from '../components/UploadZone'
 import ProductCard, { type ProductCardData } from '../components/ProductCard'
 import DetailModal from '../components/DetailModal'
 import SearchModeSelector from '../components/SearchModeSelector'
-import { visualSearch, type SearchMetrics } from '../services/api'
+import { visualSearch, getProductDetails, type SearchMetrics } from '../services/api'
 
 function useItemsPerPage(): number {
   const [items, setItems] = useState(() => {
@@ -59,7 +59,7 @@ export default function VisualSearch() {
     setLoading(true)
     setSearched(false)
     try {
-      const { results, metrics } = await visualSearch(imageFile, topK || 10, searchMode)
+      const { results, metrics } = await visualSearch(imageFile, typeof topK === 'number' ? topK : 10, searchMode)
       setResults(results)
       setMetrics(metrics)
     } catch (e) {
@@ -78,6 +78,29 @@ export default function VisualSearch() {
     setImageFile(null)
     setResults([])
     setError(null)
+  }
+
+  const handleProductClick = async (product: ProductCardData) => {
+    const details = await getProductDetails(product.id)
+    if (details) {
+      setSelectedProduct({
+        ...product,
+        title: details.name,
+        category: details.category,
+        imageUrl: details.image_url,
+        gender: details.details.gender,
+        masterCategory: details.category,
+        subCategory: details.details.subcategory,
+        articleType: details.details.type,
+        baseColour: details.details.colour,
+        season: details.details.season,
+        year: details.details.year ? parseInt(details.details.year) : undefined,
+        usage: details.details.usage,
+        productDisplayName: details.name,
+      })
+    } else {
+      setSelectedProduct(product)
+    }
   }
 
   const disabled = loading || !imageFile
@@ -216,7 +239,7 @@ export default function VisualSearch() {
                 {Array.from({ length: totalPages }, (_, i) => (
                   <div key={i} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-stack-md min-w-0 flex-[0_0_100%]">
                     {results.slice(i * perPage, (i + 1) * perPage).map((product) => (
-                      <ProductCard key={product.id} product={product} onClick={setSelectedProduct} />
+                      <ProductCard key={product.id} product={product} onClick={handleProductClick} />
                     ))}
                   </div>
                 ))}

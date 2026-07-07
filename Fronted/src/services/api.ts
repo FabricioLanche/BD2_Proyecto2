@@ -6,6 +6,7 @@ interface SearchResult {
   id: string
   name: string
   match_percentage: string
+  image_url: string
 }
 
 export interface SearchMetrics {
@@ -28,7 +29,7 @@ interface EnrichedResult {
   metrics: SearchMetrics
 }
 
-interface ProductDetail {
+export interface ProductDetail {
   id: string
   name: string
   category: string
@@ -44,36 +45,21 @@ interface ProductDetail {
   }
 }
 
-async function getProductDetails(docId: string): Promise<ProductDetail | null> {
+export async function getProductDetails(docId: string): Promise<ProductDetail | null> {
   const res = await fetch(`${API_BASE}/details/${docId}`)
   if (!res.ok) return null
   const data: { product: ProductDetail } = await res.json()
   return data.product
 }
 
-async function enrichResults(results: SearchResult[]): Promise<ProductCardData[]> {
-  const detailPromises = results.map(r => getProductDetails(r.id))
-  const details = await Promise.allSettled(detailPromises)
-
-  return results.map((r, i) => {
-    const d = details[i].status === 'fulfilled' ? details[i].value : null
-    return {
-      id: r.id,
-      title: d?.name ?? r.name,
-      category: d?.category ?? '',
-      imageUrl: d?.image_url ?? '',
-      matchPercentage: parseInt(r.match_percentage) || 0,
-      gender: d?.details?.gender,
-      masterCategory: d?.category,
-      subCategory: d?.details?.subcategory,
-      articleType: d?.details?.type,
-      baseColour: d?.details?.colour,
-      season: d?.details?.season,
-      year: d?.details?.year ? parseInt(d.details.year) : undefined,
-      usage: d?.details?.usage,
-      productDisplayName: d?.name,
-    }
-  })
+function toCard(r: SearchResult): ProductCardData {
+  return {
+    id: r.id,
+    title: r.name,
+    category: '',
+    imageUrl: r.image_url,
+    matchPercentage: parseInt(r.match_percentage) || 0,
+  }
 }
 
 export async function visualSearch(
@@ -92,8 +78,7 @@ export async function visualSearch(
   })
   if (!res.ok) throw new Error('Visual search failed')
   const data: SearchResponse = await res.json()
-  const results = await enrichResults(data.results)
-  return { results, metrics: data.metrics }
+  return { results: data.results.map(toCard), metrics: data.metrics }
 }
 
 export async function multimodalSearch(
@@ -118,6 +103,5 @@ export async function multimodalSearch(
   })
   if (!res.ok) throw new Error('Multimodal search failed')
   const data: SearchResponse = await res.json()
-  const results = await enrichResults(data.results)
-  return { results, metrics: data.metrics }
+  return { results: data.results.map(toCard), metrics: data.metrics }
 }
