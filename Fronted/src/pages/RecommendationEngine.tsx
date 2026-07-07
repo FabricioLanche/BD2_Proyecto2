@@ -3,10 +3,30 @@ import FusionSlider from '../components/FusionSlider'
 import ProductCard, { type ProductCardData } from '../components/ProductCard'
 import DetailModal from '../components/DetailModal'
 import SearchModeSelector from '../components/SearchModeSelector'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { multimodalSearch, type SearchMetrics } from '../services/api'
 
-const PER_PAGE = 5
+function useItemsPerPage(): number {
+  const [items, setItems] = useState(() => {
+    if (typeof window === 'undefined') return 10
+    if (window.innerWidth < 640) return 4
+    if (window.innerWidth < 1024) return 6
+    if (window.innerWidth < 1280) return 8
+    return 10
+  })
+  useEffect(() => {
+    const onResize = () => {
+      setItems(
+        window.innerWidth < 640 ? 4 :
+        window.innerWidth < 1024 ? 6 :
+        window.innerWidth < 1280 ? 8 : 10
+      )
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+  return items
+}
 
 export default function RecommendationEngine() {
   const [imagePreview, setImagePreview] = useState<string | null>(null)
@@ -22,8 +42,8 @@ export default function RecommendationEngine() {
   const [searched, setSearched] = useState(false)
   const [searchMode, setSearchMode] = useState<'spimi' | 'postgres'>('spimi')
   const [metrics, setMetrics] = useState<SearchMetrics | null>(null)
-
-  const totalPages = Math.max(1, Math.ceil(results.length / PER_PAGE))
+  const perPage = useItemsPerPage()
+  const totalPages = Math.max(1, Math.ceil(results.length / perPage))
 
   const handleUpload = (file: File) => {
     setImagePreview(URL.createObjectURL(file))
@@ -37,16 +57,15 @@ export default function RecommendationEngine() {
     setTextQuery('')
     setResults([])
     setError(null)
-    setPage(1)
     setSearched(false)
   }
 
   const handleSearch = async () => {
     if (!imageFile && !textQuery.trim()) return
     setResults([])
+    setPage(1)
     setMetrics(null)
     setError(null)
-    setPage(1)
     setLoading(true)
     setSearched(false)
     try {
@@ -67,6 +86,8 @@ export default function RecommendationEngine() {
       setLoading(false)
     }
   }
+
+  useEffect(() => { setPage(1) }, [results.length, perPage])
 
   const disabled = loading || (!imageFile && !textQuery.trim())
 
@@ -220,29 +241,30 @@ export default function RecommendationEngine() {
       </div>
 
       <div className="flex flex-col min-h-0">
-        <div className="flex-1 flex flex-col justify-center min-h-0">
+        <div className="flex-1 flex flex-col min-h-0">
           <div className="flex items-center justify-between mb-2">
             <h3 className="font-headline-sm text-headline-sm text-on-surface">Recommendations</h3>
             <span className="font-label-md text-label-md text-on-surface-variant/60 bg-surface-container px-3 py-1 rounded-full">{results.length} results</span>
           </div>
 
-          <div className="relative">
+          <div className="flex items-center gap-1 sm:gap-2">
             {page > 1 && (
               <button
                 onClick={() => setPage((p) => p - 1)}
-                className="absolute -left-3 top-1/2 -translate-y-1/2 z-10 w-9 h-9 flex items-center justify-center rounded-full bg-surface-container border border-outline-variant/30 shadow-sm hover:bg-surface-container-high transition-colors"
+                className="shrink-0 w-8 sm:w-9 h-8 sm:h-9 flex items-center justify-center rounded-full bg-surface-container border border-outline-variant/30 shadow-sm hover:bg-surface-container-high transition-colors"
+                aria-label="Previous page"
               >
-                <span className="material-symbols-outlined text-[18px]">chevron_left</span>
+                <span className="material-symbols-outlined text-[16px] sm:text-[18px]">chevron_left</span>
               </button>
             )}
-            <div className="overflow-hidden rounded-lg">
+            <div className="flex-1 overflow-hidden rounded-lg min-w-0">
               <div
                 className="flex transition-transform duration-300 ease-out will-change-transform"
                 style={{ transform: `translateX(-${(page - 1) * 100}%)` }}
               >
                 {Array.from({ length: totalPages }, (_, i) => (
-                  <div key={i} className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-stack-md min-w-0 flex-shrink-0 w-full">
-                    {results.slice(i * PER_PAGE, (i + 1) * PER_PAGE).map((product) => (
+                  <div key={i} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-stack-md min-w-0 flex-[0_0_100%]">
+                    {results.slice(i * perPage, (i + 1) * perPage).map((product) => (
                       <ProductCard key={product.id} product={product} onClick={setSelectedProduct} />
                     ))}
                   </div>
@@ -252,26 +274,30 @@ export default function RecommendationEngine() {
             {page < totalPages && (
               <button
                 onClick={() => setPage((p) => p + 1)}
-                className="absolute -right-3 top-1/2 -translate-y-1/2 z-10 w-9 h-9 flex items-center justify-center rounded-full bg-surface-container border border-outline-variant/30 shadow-sm hover:bg-surface-container-high transition-colors"
+                className="shrink-0 w-8 sm:w-9 h-8 sm:h-9 flex items-center justify-center rounded-full bg-surface-container border border-outline-variant/30 shadow-sm hover:bg-surface-container-high transition-colors"
+                aria-label="Next page"
               >
-                <span className="material-symbols-outlined text-[18px]">chevron_right</span>
+                <span className="material-symbols-outlined text-[16px] sm:text-[18px]">chevron_right</span>
               </button>
             )}
           </div>
 
-          <div className="flex justify-center gap-2 mt-3">
-            {Array.from({ length: totalPages }, (_, i) => (
-              <button
-                key={i}
-                onClick={() => setPage(i + 1)}
-                className={`w-2 h-2 rounded-full transition-all duration-300 ${
-                  page === i + 1
-                    ? 'bg-primary w-5'
-                    : 'bg-outline-variant/30 hover:bg-outline-variant/50'
-                }`}
-              />
-            ))}
-          </div>
+          {totalPages > 1 && (
+            <div className="flex justify-center gap-2 mt-3">
+              {Array.from({ length: totalPages }, (_, i) => (
+                <button
+                  key={i}
+                  onClick={() => setPage(i + 1)}
+                  className={`h-2 rounded-full transition-all duration-300 ${
+                    page === i + 1
+                      ? 'bg-primary w-5'
+                      : 'bg-outline-variant/30 hover:bg-outline-variant/50 w-2'
+                  }`}
+                  aria-label={`Page ${i + 1}`}
+                />
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
