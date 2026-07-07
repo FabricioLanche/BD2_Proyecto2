@@ -14,7 +14,7 @@ export default function VisualSearch() {
   const [results, setResults] = useState<ProductCardData[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [topK, setTopK] = useState(10)
+  const [topK, setTopK] = useState<number | string>('')
   const [searched, setSearched] = useState(false)
 
   const totalPages = Math.max(1, Math.ceil(results.length / PER_PAGE))
@@ -36,7 +36,7 @@ export default function VisualSearch() {
     setLoading(true)
     setSearched(false)
     try {
-      const data = await visualSearch(imageFile, topK)
+      const data = await visualSearch(imageFile, topK || 10)
       setResults(data)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Search failed')
@@ -91,16 +91,18 @@ export default function VisualSearch() {
       <div className="border-t border-outline-variant/40 px-4 py-3 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <label className="font-label-sm text-label-sm text-on-surface-variant/50 whitespace-nowrap">Results</label>
-          <select
+          <input
+            type="number"
+            min={1}
             value={topK}
-            onChange={(e) => setTopK(Number(e.target.value))}
-            className="bg-surface-container border border-outline-variant/40 rounded-lg px-2.5 py-1.5 font-label-sm text-label-sm text-on-surface outline-none focus:ring-1 focus:ring-primary/40"
-          >
-            <option value={10}>10</option>
-            <option value={20}>20</option>
-            <option value={30}>30</option>
-            <option value={50}>50</option>
-          </select>
+            onChange={(e) => setTopK(e.target.value === '' ? '' : Number(e.target.value))}
+            placeholder="K"
+            className={`w-16 bg-surface-container border rounded-lg px-2.5 py-1.5 font-label-sm text-label-sm outline-none focus:ring-1 focus:ring-primary/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+              topK === ''
+                ? 'border-dashed border-outline-variant/30 text-on-surface-variant/35'
+                : 'border-outline-variant/40 text-on-surface'
+            }`}
+          />
         </div>
         {searchBtn}
       </div>
