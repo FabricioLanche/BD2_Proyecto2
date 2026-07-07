@@ -189,7 +189,7 @@ export default function VisualSearch() {
                 style={{ transform: `translateX(-${(page - 1) * 100}%)` }}
               >
                 {Array.from({ length: totalPages }, (_, i) => (
-                  <div key={i} className="grid grid-cols-5 gap-stack-md min-w-0 flex-shrink-0 w-full">
+                  <div key={i} className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-stack-md min-w-0 flex-shrink-0 w-full">
                     {results.slice(i * PER_PAGE, (i + 1) * PER_PAGE).map((product) => (
                       <ProductCard key={product.id} product={product} onClick={setSelectedProduct} />
                     ))}
