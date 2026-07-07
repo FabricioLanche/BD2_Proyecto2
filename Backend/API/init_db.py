@@ -1,4 +1,6 @@
 """Initialize PostgreSQL database from CSV dump if empty."""
+import csv
+import io
 import os
 import pickle
 import logging
@@ -84,15 +86,21 @@ def create_table(cursor, dim: int) -> None:
         WITH (lists = 100)
     """)
 
-    logger.info("Table 'descriptors' created (dim=%d).", dim)
+    logger.info("Table 'descriptors' created (image_dim=%d).", dim)
 
 
 def load_csv(conn, path: Path) -> int:
     with conn.cursor() as cur:
         with open(path, "r", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            buf = io.StringIO()
+            writer = csv.writer(buf)
+            for row in reader:
+                writer.writerow(row[:4])
+            buf.seek(0)
             cur.copy_expert(
-                "COPY descriptors FROM STDIN WITH CSV HEADER DELIMITER ','",
-                f,
+                "COPY descriptors (doc_id, url, texto, image_histogram) FROM STDIN WITH CSV HEADER DELIMITER ','",
+                buf,
             )
         conn.commit()
         count = cur.rowcount

@@ -1,5 +1,5 @@
 from pathlib import Path
-
+import os
 import psycopg2
 import logging
 from pgvector.psycopg2 import register_vector
@@ -9,14 +9,14 @@ logger = logging.getLogger(__name__)
 class PersistenceManager:
 
     def __init__(
-        self, n_documents: int, 
+        self, 
+        n_documents: int, 
         host=os.getenv("DB_HOST", "localhost"),
         port=os.getenv("DB_PORT", "5433"),
         database=os.getenv("DB_NAME", "multimodal"),
         user=os.getenv("DB_USER", "postgres"),
         password=os.getenv("DB_PASSWORD", "123456")
     ):
-        import os
         self.n_documents = n_documents
         base = Path(__file__).resolve().parent.parent / "Data"
         self.data_dir = base / str(n_documents) if n_documents is not None else base
@@ -39,7 +39,7 @@ class PersistenceManager:
     def _get_cursor(self):
         return self.connection.cursor()
     
-    def create_tables(self, histogram_dim: int = 512):
+    def create_tables(self):
         with self._get_cursor() as cursor:
             try:
 
@@ -55,7 +55,8 @@ class PersistenceManager:
                         texto_vector TSVECTOR GENERATED ALWAYS AS (
                             to_tsvector('english', coalesce(texto, ''))
                         ) STORED,
-                        image_histogram VECTOR({int(histogram_dim)})
+                        image_histogram VECTOR(512),
+                        text_histogram VECTOR(1000)
                     );
 
                 CREATE INDEX idx_descriptors_texto_vector_gin
@@ -80,26 +81,6 @@ class PersistenceManager:
             except Exception as e:
                 self.connection.rollback()
                 logger.error(f"Error creando tablas: {e}")
-                raise
-
-    def add_text_histogram_column(self, dim: int) -> None:
-        with self._get_cursor() as cursor:
-            try:
-                cursor.execute(f"""
-                    ALTER TABLE descriptors
-                    ADD COLUMN IF NOT EXISTS text_histogram VECTOR({int(dim)});
-                CREATE INDEX IF NOT EXISTS idx_descriptors_text_histogram_hnsw
-                ON descriptors
-                USING hnsw (text_histogram vector_l2_ops);
-                CREATE INDEX IF NOT EXISTS idx_descriptors_text_histogram_ivfflat
-                ON descriptors
-                USING ivfflat (text_histogram vector_l2_ops)
-                WITH (lists = 100);
-                """)
-                self.connection.commit()
-            except Exception as e:
-                self.connection.rollback()
-                logger.error(f"Error adding text_histogram column: {e}")
                 raise
             
     def insert_document(self, doc_id: int, url: str, texto: str) -> None:
@@ -162,9 +143,9 @@ class PersistenceManager:
 
     def dump_csv(self) -> str:
         filename = str(self.data_dir / f"descriptors_dump_{self.n_documents}.csv")
-
-        with open(filename, "w", encoding="utf-8") as f:
-            with self._get_cursor() as cursor:
+        logger.info("Exportando dump a %s ...", filename)
+        with self._get_cursor() as cursor:
+            with open(filename, "w", encoding="utf-8") as f:
                 cursor.copy_expert(
                     "COPY descriptors TO STDOUT WITH CSV HEADER DELIMITER ','",
                     f,

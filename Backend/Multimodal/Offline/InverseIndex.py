@@ -50,6 +50,21 @@ class InverseIndex:
         return (block_btree, block_heap)
 
     @staticmethod
+    def _compute_tfidf_for_codeword(
+        merged: dict[int, int],
+        N: int,
+        idf_dict: dict[int, float],
+        doc_norm_sq: dict[int, float],
+        codeword_id: int,
+    ) -> None:
+        df = len(merged)
+        idf = math.log(N / df) if df > 0 else 0.0
+        idf_dict[codeword_id] = idf
+        for doc_id, tf in merged.items():
+            weighted = tf * idf
+            doc_norm_sq[doc_id] = doc_norm_sq.get(doc_id, 0.0) + weighted * weighted
+
+    @staticmethod
     def _merge_blocks(
         blocks: list[tuple[str, str]],
         final_btree_path: str,
@@ -57,7 +72,8 @@ class InverseIndex:
         btree_file_id: int,
         heap_file_id: int,
         buffer_manager: BufferManager,
-    ) -> BPlusTree:
+        N: int | None = None,
+    ) -> tuple[BPlusTree, dict[int, float], dict[int, float]]:
         iterators = []
         current = []
 
@@ -79,6 +95,8 @@ class InverseIndex:
                                 buffer_manager=buffer_manager)
 
         tails: dict[int, tuple[int, int]] = {}
+        idf_dict: dict[int, float] = {}
+        doc_norm_sq: dict[int, float] = {}
 
         while any(e is not None for e in current):
             min_key = min(e[0] for e in current if e is not None)
@@ -93,12 +111,21 @@ class InverseIndex:
                     except StopIteration:
                         current[i] = None
 
+            if N is not None:
+                InverseIndex._compute_tfidf_for_codeword(
+                    merged, N, idf_dict, doc_norm_sq, min_key,
+                )
+
             tail = tails.get(min_key)
             for doc_id, tf in merged.items():
                 tail = final_btree.insert_posting(min_key, (doc_id, tf), tail)
             tails[min_key] = tail
 
-        return final_btree
+        doc_norm_dict: dict[int, float] = {
+            doc_id: math.sqrt(sq)
+            for doc_id, sq in doc_norm_sq.items()
+        }
+        return final_btree, idf_dict, doc_norm_dict
 
     @staticmethod
     def _spimi_index_construction(
@@ -109,7 +136,8 @@ class InverseIndex:
         btree_file_id: int,
         heap_file_id: int,
         buffer_manager: BufferManager,
-    ) -> BPlusTree:
+        N: int | None = None,
+    ) -> tuple[BPlusTree, dict[int, float], dict[int, float]]:
         buffer: dict[int, dict[int, int]] = {}
         buffer_mem = 0
         block_id = 0
@@ -151,45 +179,24 @@ class InverseIndex:
                     btree_file_id=btree_file_id,
                     heap_file_id=heap_file_id,
                     buffer_manager=buffer_manager,
+                    N=N,
                 )
             else:
-                return BPlusTree(btree_path, heap_path,
-                                 btree_file_id=btree_file_id,
-                                 heap_file_id=heap_file_id,
-                                 buffer_manager=buffer_manager)
+                return (BPlusTree(btree_path, heap_path,
+                                  btree_file_id=btree_file_id,
+                                  heap_file_id=heap_file_id,
+                                  buffer_manager=buffer_manager),
+                        {}, {})
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
     @staticmethod
-    def _compute_and_persist_tfidf(
-        btree: BPlusTree, N: int, prefix: str,
-        buffer_manager: BufferManager,
+    def _persist_tfidf(
+        idf_dict: dict[int, float],
+        doc_norm_dict: dict[int, float],
+        N: int,
+        prefix: str,
     ) -> None:
-        idf_dict: dict[int, float] = {}
-
-        total_postings = sum(len(pl) for _, pl in btree.scan())
-
-        doc_norm_sq: dict[int, float] = {}
-
-        pbar = tqdm(total=total_postings, desc=f"  TF-IDF {prefix}", unit="post")
-        for word_id, posting_list in btree.scan():
-            df = len(posting_list)
-            idf = math.log(N / df) if df > 0 else 0.0
-            idf_dict[word_id] = idf
-
-            for posting in posting_list:
-                doc_id = posting.DOC_ID
-                tf = posting.TF
-                weighted = tf * idf
-                doc_norm_sq[doc_id] = doc_norm_sq.get(doc_id, 0.0) + weighted * weighted
-                pbar.update(1)
-        pbar.close()
-
-        doc_norm_dict: dict[int, float] = {
-            doc_id: math.sqrt(sq)
-            for doc_id, sq in doc_norm_sq.items()
-        }
-
         with open(os.path.join(DATA_DIR, f'{prefix}_word_idf_{N}.pkl'), 'wb') as f:
             pickle.dump(idf_dict, f)
         with open(os.path.join(DATA_DIR, f'{prefix}_doc_norm_{N}.pkl'), 'wb') as f:
@@ -202,12 +209,13 @@ class InverseIndex:
     ) -> BPlusTree:
         btree_path = os.path.join(DATA_DIR, f'text_index_{self.n_documents}.btree')
         heap_path = os.path.join(DATA_DIR, f'text_index_{self.n_documents}.heap')
-        btree = self._spimi_index_construction(
+        btree, idf_dict, doc_norm_dict = self._spimi_index_construction(
             token_stream, btree_path, heap_path, buffer_size,
             btree_file_id=0, heap_file_id=1,
             buffer_manager=self.buffer_manager,
+            N=self.n_documents,
         )
-        self._compute_and_persist_tfidf(btree, self.n_documents, 'text', self.buffer_manager)
+        self._persist_tfidf(idf_dict, doc_norm_dict, self.n_documents, 'text')
         return btree
 
     def build_image_index(
@@ -217,10 +225,11 @@ class InverseIndex:
     ) -> BPlusTree:
         btree_path = os.path.join(DATA_DIR, f'image_index_{self.n_documents}.btree')
         heap_path = os.path.join(DATA_DIR, f'image_index_{self.n_documents}.heap')
-        btree = self._spimi_index_construction(
+        btree, idf_dict, doc_norm_dict = self._spimi_index_construction(
             token_stream, btree_path, heap_path, buffer_size,
             btree_file_id=2, heap_file_id=3,
             buffer_manager=self.buffer_manager,
+            N=self.n_documents,
         )
-        self._compute_and_persist_tfidf(btree, self.n_documents, 'image', self.buffer_manager)
+        self._persist_tfidf(idf_dict, doc_norm_dict, self.n_documents, 'image')
         return btree

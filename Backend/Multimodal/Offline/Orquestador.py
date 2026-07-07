@@ -120,7 +120,6 @@ def _image_worker(
         logger.warning("Error imagen doc_id=%d: %s", doc_id, e)
         return None
 
-
 def _text_worker(
     item: Tuple[int, str, int],
 ) -> Optional[Tuple[int, list]]:
@@ -141,7 +140,8 @@ def parallel_feature_stage(
     items: List,
     worker_fn: Callable,
     codebook_builder: Union[VisualCodebookBuilder, TextCodebookBuilder],
-    max_workers: int
+    max_workers: int,
+    label: str = "",
 ) -> Iterator[Tuple[int, list]]:
     """
     Stage genérico de extracción en paralelo.
@@ -266,6 +266,11 @@ def parallel_transform_stage(
     label: str = "",
     persist: bool = True,
 ) -> Tuple[List[Tuple[int, np.ndarray]], List[Tuple[int, int]]]:
+    """Stage genérico de transformación en paralelo (pasada 2).
+
+    Distribuye la transformación features→histograma entre procesos hijo.
+    Retorna (histograms, all_tokens) para construir índices.
+    """
     items = [(doc_id, features, codebook, transform_class)
              for doc_id, features in stream]
     n = len(items)
@@ -298,13 +303,16 @@ def codebook_transform_and_persist_stage(
     transform: Union[TextCodebookTransform, VisualCodebookTransform],
     persister: PersistenceManager,
 ) -> Iterator[Tuple[int, np.ndarray]]:
+    """
+    Transforma features a histogramas y persiste si el transform lo requiere.
+
+    Solo VisualCodebookTransform tiene persist_histogram = True
+    (persiste image_histogram vía persister.insert_histogram).
+    """
     for doc_id, features_list in stream:
         histogram = transform.transform(features_list, doc_id)
         if getattr(transform, 'persist_histogram', False):
-            if isinstance(transform, TextCodebookTransform):
-                persister.insert_text_histogram(doc_id, histogram)
-            else:
-                persister.insert_image_histogram(doc_id, histogram)
+            persister.insert_histogram(doc_id, histogram)
         yield doc_id, histogram
 
 
@@ -419,8 +427,6 @@ def main() -> None:
         "Codebooks listos: visual k=%d, texto k=%d",
         len(visual_codebook), len(text_codebook),
     )
-
-    persister.add_text_histogram_column(len(text_codebook))
 
     # ── Pasada 2: Texto ──────────────────────────────────────
     logger.info("=== Pasada 2: Texto ===")

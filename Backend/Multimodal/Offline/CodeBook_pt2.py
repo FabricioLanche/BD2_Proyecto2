@@ -5,6 +5,7 @@ import numpy as np
 
 class TextCodebookTransform:
 
+    TARGET_DIM = 1000
     persist_histogram = True
 
     def __init__(self, codebook: List[int]):
@@ -12,8 +13,7 @@ class TextCodebookTransform:
         self.tokens: List[Tuple[int, int]] = []
 
     def transform(self, features_list, doc_id: int) -> np.ndarray:
-        k = len(self.codebook)
-        histogram = np.zeros(k, dtype=np.float32)
+        histogram = np.zeros(self.TARGET_DIM, dtype=np.float32)
         for bow in features_list:
             for i, word_id in enumerate(self.codebook):
                 freq = bow.get(word_id, 0)
