@@ -18,7 +18,7 @@ class TextCodebookTransform:
             for i, word_id in enumerate(self.codebook):
                 freq = bow.get(word_id, 0)
                 histogram[i] += freq
-                if freq > 0:
+                for _ in range(freq):
                     self.tokens.append((doc_id, i))
         return histogram
 

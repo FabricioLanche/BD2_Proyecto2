@@ -78,11 +78,11 @@ def create_table(cursor, dim: int) -> None:
     """)
     cursor.execute("""
         CREATE INDEX idx_descriptors_image_histogram_hnsw
-        ON descriptors USING hnsw (image_histogram vector_l2_ops)
+        ON descriptors USING hnsw (image_histogram vector_cosine_ops)
     """)
     cursor.execute(f"""
         CREATE INDEX idx_descriptors_image_histogram_ivfflat
-        ON descriptors USING ivfflat (image_histogram vector_l2_ops)
+        ON descriptors USING ivfflat (image_histogram vector_cosine_ops)
         WITH (lists = 100)
     """)
 

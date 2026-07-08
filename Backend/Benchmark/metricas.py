@@ -15,7 +15,22 @@ import matplotlib.pyplot as plt
 
 TAMAÑOS = [10000, 20000, 30000, 40000]
 TOP_K = 50
-QUERIES_TEXTO = ["Men|Apparel|Topwear|Shirts|Navy Blue|Fall|2011.0|Casual|Turtle Check Men Navy Blue Shirt", "Men|Apparel|Bottomwear|Jeans|Blue|Summer|2012.0|Casual|Peter England Men Party Blue Jeanss", "Women|Accessories|Watches|Watches|Silver|Winter|2016.0|Casual|Titan Women Silver Watch", "Men|Apparel|Bottomwear|Track Pants|Black|Fall|2011.0|Casual|Manchester United Men Solid Black Track Pants", "Men|Apparel|Topwear|Tshirts|Grey|Summer|2012.0|Casual|Puma Men Grey T-shirt"]
+
+SUBCATEGORY_QUERIES = [
+    "Topwear", 
+    "Bottomwear", 
+    "Watches", 
+    "Innerwear", 
+    "Jewellery"
+    ]
+
+QUERIES_TEXTO = [
+    "Men|Apparel|Topwear|Shirts|Navy Blue|Fall|2011.0|Casual|Turtle Check Men Navy Blue Shirt", 
+    "Men|Apparel|Bottomwear|Jeans|Blue|Summer|2012.0|Casual|Peter England Men Party Blue Jeanss", 
+    "Women|Accessories|Watches|Watches|Silver|Winter|2016.0|Casual|Titan Women Silver Watch", 
+    "Men|Apparel|Bottomwear|Track Pants|Black|Fall|2011.0|Casual|Manchester United Men Solid Black Track Pants", 
+    "Men|Apparel|Topwear|Tshirts|Grey|Summer|2012.0|Casual|Puma Men Grey T-shirt"
+]
 
 DB_CONFIG = {
     "host": "localhost", 
@@ -27,13 +42,11 @@ DB_CONFIG = {
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 IMAGES_DIR = BASE_DIR / "Multimodal" / "Data" / "test_metrics_images"
+IMAGES = ["15970.jpg", "39386.jpg", "48311.jpg", "51832.jpg", "59263.jpg"]
 
-TODAS_LAS_IMAGENES = list(IMAGES_DIR.glob("*.jpg"))
-if not TODAS_LAS_IMAGENES:
+QUERY_IMAGENES = [IMAGES_DIR / img for img in IMAGES if (IMAGES_DIR / img).exists()]
+if not QUERY_IMAGENES:
     print(f"ADVERTENCIA: No se encontraron imágenes en {IMAGES_DIR}")
-    QUERY_IMAGENES = []
-else:
-    QUERY_IMAGENES = random.sample(TODAS_LAS_IMAGENES, min(5, len(TODAS_LAS_IMAGENES)))
 
 STYLES_CSV = BASE_DIR / "Multimodal" / "Data" / "styles.csv"
 
@@ -133,18 +146,49 @@ def medir_disco(tamano):
         "hnsw_mb": round(pg_hnsw / (1024 * 1024), 2),
     }
 
-def calcular_recall_subcategory(result, sub_map: dict[int, str], k: int) -> float:
+def count_subcategory_in_dataset_from_csv(tamano: int, sub_map: dict[int, str]) -> dict[str, int]:
+    """Cuenta subcategorías desde el CSV dump para no calentar el shared buffer de Postgres."""
+    data_dir = BASE_DIR / "Multimodal" / "Data" / str(tamano)
+    csv_path = data_dir / f"descriptors_dump_{tamano}.csv"
+    counts: dict[str, int] = {}
+    with open(csv_path, "r") as f:
+        reader = csv.reader(f)
+        next(reader)
+        for row in reader:
+            doc_id = int(row[0])
+            sub = sub_map.get(doc_id)
+            if sub:
+                counts[sub] = counts.get(sub, 0) + 1
+    return counts
+
+
+def calcular_precision(result, sub_map: dict[int, str], k: int, expected_subcategory: str) -> float:
+    if not expected_subcategory:
+        return 0.0
     if result and isinstance(result[0], dict):
         doc_ids = [r["doc_id"] for r in result]
     else:
         doc_ids = result
     if not doc_ids:
         return 0.0
-    target = sub_map.get(doc_ids[0])
-    if not target:
+    tp = sum(1 for doc_id in doc_ids[:k] if sub_map.get(doc_id) == expected_subcategory)
+    return tp / k
+
+
+def calcular_recall(result, sub_map: dict[int, str], k: int, expected_subcategory: str, subcategory_counts: dict[str, int]) -> float:
+    if not expected_subcategory:
         return 0.0
-    matches = sum(1 for doc_id in doc_ids[:k] if sub_map.get(doc_id) == target)
-    return matches / k
+    if result and isinstance(result[0], dict):
+        doc_ids = [r["doc_id"] for r in result]
+    else:
+        doc_ids = result
+    if not doc_ids:
+        return 0.0
+    tp = sum(1 for doc_id in doc_ids[:k] if sub_map.get(doc_id) == expected_subcategory)
+    total = subcategory_counts.get(expected_subcategory, 0)
+    if total == 0:
+        return 0.0
+    return tp / total
 
 
 def busqueda_gin_texto(conn, texto):
@@ -155,26 +199,33 @@ def busqueda_gin_texto(conn, texto):
         ORDER BY ts_rank(texto_vector, plainto_tsquery('english', %s)) DESC 
         LIMIT 50;
     """
-    with conn.cursor() as cur:
-        cur.execute("SET LOCAL enable_indexscan = OFF;")
-        cur.execute("SET LOCAL enable_indexonlyscan = OFF;")
-        cur.execute("SET LOCAL enable_seqscan = OFF;")
-        cur.execute(query_explicar, (texto, texto))
-        explicacion = cur.fetchone()[0][0]
-        io_blocks = explicacion.get("Plan", {}).get("Shared Read Blocks", 0)
-
     query_real = """
         SELECT doc_id FROM descriptors 
         WHERE texto_vector @@ plainto_tsquery('english', %s) 
         ORDER BY ts_rank(texto_vector, plainto_tsquery('english', %s)) DESC 
         LIMIT 50;
     """
-    with conn.cursor() as cur:
+    old_autocommit = conn.autocommit
+    conn.autocommit = False
+    cur = conn.cursor()
+    try:
+        cur.execute("UPDATE pg_index SET indisvalid = false WHERE indexrelid = 'idx_descriptors_texto_vector_gist'::regclass;")
         cur.execute("SET LOCAL enable_indexscan = OFF;")
         cur.execute("SET LOCAL enable_indexonlyscan = OFF;")
         cur.execute("SET LOCAL enable_seqscan = OFF;")
+        cur.execute(query_explicar, (texto, texto))
+        explicacion = cur.fetchone()[0][0]
+        io_blocks = explicacion.get("Plan", {}).get("Shared Read Blocks", 0)
         cur.execute(query_real, (texto, texto))
-        return [row[0] for row in cur.fetchall()], io_blocks
+        results = [row[0] for row in cur.fetchall()]
+        cur.execute("UPDATE pg_index SET indisvalid = true WHERE indexrelid = 'idx_descriptors_texto_vector_gist'::regclass;")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.autocommit = old_autocommit
+    return results, io_blocks, explicacion
 
 
 def busqueda_ivfflat_imagen(conn, orquestador, ruta_imagen):
@@ -187,21 +238,30 @@ def busqueda_ivfflat_imagen(conn, orquestador, ruta_imagen):
         ORDER BY image_histogram <=> %s::vector 
         LIMIT 50;
     """
-    with conn.cursor() as cur:
-        cur.execute("SET LOCAL enable_seqscan = OFF;")
-        cur.execute(query_explicar, (vector_string,))
-        explicacion = cur.fetchone()[0][0]
-        io_blocks = explicacion.get("Plan", {}).get("Shared Read Blocks", 0)
-
     query_real = """
         SELECT doc_id FROM descriptors 
         ORDER BY image_histogram <=> %s::vector 
         LIMIT 50;
     """
-    with conn.cursor() as cur:
+    old_autocommit = conn.autocommit
+    conn.autocommit = False
+    cur = conn.cursor()
+    try:
+        cur.execute("UPDATE pg_index SET indisvalid = false WHERE indexrelid = 'idx_descriptors_image_histogram_hnsw'::regclass;")
         cur.execute("SET LOCAL enable_seqscan = OFF;")
+        cur.execute(query_explicar, (vector_string,))
+        explicacion = cur.fetchone()[0][0]
+        io_blocks = explicacion.get("Plan", {}).get("Shared Read Blocks", 0)
         cur.execute(query_real, (vector_string,))
-        return [row[0] for row in cur.fetchall()], io_blocks
+        results = [row[0] for row in cur.fetchall()]
+        cur.execute("UPDATE pg_index SET indisvalid = true WHERE indexrelid = 'idx_descriptors_image_histogram_hnsw'::regclass;")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.autocommit = old_autocommit
+    return results, io_blocks, explicacion
 
 
 def busqueda_gist_texto(conn, texto):
@@ -212,24 +272,32 @@ def busqueda_gist_texto(conn, texto):
         ORDER BY ts_rank(texto_vector, plainto_tsquery('english', %s)) DESC 
         LIMIT 50;
     """
-    with conn.cursor() as cur:
-        cur.execute("SET LOCAL enable_bitmapscan = OFF;")
-        cur.execute("SET LOCAL enable_seqscan = OFF;")
-        cur.execute(query_explicar, (texto, texto))
-        explicacion = cur.fetchone()[0][0]
-        io_blocks = explicacion.get("Plan", {}).get("Shared Read Blocks", 0)
-
     query_real = """
         SELECT doc_id FROM descriptors 
         WHERE texto_vector @@ plainto_tsquery('english', %s) 
         ORDER BY ts_rank(texto_vector, plainto_tsquery('english', %s)) DESC 
         LIMIT 50;
     """
-    with conn.cursor() as cur:
+    old_autocommit = conn.autocommit
+    conn.autocommit = False
+    cur = conn.cursor()
+    try:
+        cur.execute("UPDATE pg_index SET indisvalid = false WHERE indexrelid = 'idx_descriptors_texto_vector_gin'::regclass;")
         cur.execute("SET LOCAL enable_bitmapscan = OFF;")
         cur.execute("SET LOCAL enable_seqscan = OFF;")
+        cur.execute(query_explicar, (texto, texto))
+        explicacion = cur.fetchone()[0][0]
+        io_blocks = explicacion.get("Plan", {}).get("Shared Read Blocks", 0)
         cur.execute(query_real, (texto, texto))
-        return [row[0] for row in cur.fetchall()], io_blocks
+        results = [row[0] for row in cur.fetchall()]
+        cur.execute("UPDATE pg_index SET indisvalid = true WHERE indexrelid = 'idx_descriptors_texto_vector_gin'::regclass;")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.autocommit = old_autocommit
+    return results, io_blocks, explicacion
 
 
 def busqueda_hnsw_imagen(conn, orquestador, ruta_imagen):
@@ -242,21 +310,30 @@ def busqueda_hnsw_imagen(conn, orquestador, ruta_imagen):
         ORDER BY image_histogram <=> %s::vector 
         LIMIT 50;
     """
-    with conn.cursor() as cur:
-        cur.execute("SET LOCAL enable_seqscan = OFF;")
-        cur.execute(query_explicar, (vector_string,))
-        explicacion = cur.fetchone()[0][0]
-        io_blocks = explicacion.get("Plan", {}).get("Shared Read Blocks", 0)
-
     query_real = """
         SELECT doc_id FROM descriptors 
         ORDER BY image_histogram <=> %s::vector 
         LIMIT 50;
     """
-    with conn.cursor() as cur:
+    old_autocommit = conn.autocommit
+    conn.autocommit = False
+    cur = conn.cursor()
+    try:
+        cur.execute("UPDATE pg_index SET indisvalid = false WHERE indexrelid = 'idx_descriptors_image_histogram_ivfflat'::regclass;")
         cur.execute("SET LOCAL enable_seqscan = OFF;")
+        cur.execute(query_explicar, (vector_string,))
+        explicacion = cur.fetchone()[0][0]
+        io_blocks = explicacion.get("Plan", {}).get("Shared Read Blocks", 0)
         cur.execute(query_real, (vector_string,))
-        return [row[0] for row in cur.fetchall()], io_blocks
+        results = [row[0] for row in cur.fetchall()]
+        cur.execute("UPDATE pg_index SET indisvalid = true WHERE indexrelid = 'idx_descriptors_image_histogram_ivfflat'::regclass;")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.autocommit = old_autocommit
+    return results, io_blocks, explicacion
 
 
 def busqueda_lineal_texto(conn, orquestador, texto):
@@ -346,7 +423,7 @@ def _linear_tfidf_scores(query_hist, word_idf, doc_norm, db_rows, k):
     return [doc_id for doc_id, _ in top]
 
 
-def busqueda_lineal_tfidf_texto(conn, orquestador, texto, tamano):
+def busqueda_lineal_tfidf_texto(conn, orquestador, texto, tamano, cold_io=0, cold_explain=None):
     qhist = orquestador._text_histogram(texto)
     d = BASE_DIR / "Multimodal" / "Data" / str(tamano)
     with open(d / f"text_word_idf_{tamano}.pkl", "rb") as f:
@@ -354,12 +431,15 @@ def busqueda_lineal_tfidf_texto(conn, orquestador, texto, tamano):
     with open(d / f"text_doc_norm_{tamano}.pkl", "rb") as f:
         dnorm = pickle.load(f)
     with conn.cursor() as cur:
-        cur.execute("SELECT doc_id, text_histogram FROM descriptors WHERE text_histogram IS NOT NULL")
+        cur.execute("""
+            SELECT doc_id, text_histogram FROM descriptors WHERE text_histogram IS NOT NULL
+        """)
         rows = cur.fetchall()
-    return _linear_tfidf_scores(qhist, widf, dnorm, rows, TOP_K)
+    results = _linear_tfidf_scores(qhist, widf, dnorm, rows, TOP_K)
+    return results, cold_io, cold_explain
 
 
-def busqueda_lineal_tfidf_imagen(conn, orquestador, ruta_imagen, tamano):
+def busqueda_lineal_tfidf_imagen(conn, orquestador, ruta_imagen, tamano, cold_io=0, cold_explain=None):
     qhist = orquestador._image_histogram(str(ruta_imagen))
     d = BASE_DIR / "Multimodal" / "Data" / str(tamano)
     with open(d / f"image_word_idf_{tamano}.pkl", "rb") as f:
@@ -367,9 +447,30 @@ def busqueda_lineal_tfidf_imagen(conn, orquestador, ruta_imagen, tamano):
     with open(d / f"image_doc_norm_{tamano}.pkl", "rb") as f:
         dnorm = pickle.load(f)
     with conn.cursor() as cur:
-        cur.execute("SELECT doc_id, image_histogram FROM descriptors WHERE image_histogram IS NOT NULL")
+        cur.execute("""
+            SELECT doc_id, image_histogram FROM descriptors WHERE image_histogram IS NOT NULL
+        """)
         rows = cur.fetchall()
-    return _linear_tfidf_scores(qhist, widf, dnorm, rows, TOP_K)
+    results = _linear_tfidf_scores(qhist, widf, dnorm, rows, TOP_K)
+    return results, cold_io, cold_explain
+
+
+def limpiar_cache_postgres():
+    """Reinicia el contenedor Docker de PostgreSQL para obtener cold cache."""
+    import subprocess
+    try:
+        subprocess.run(["docker", "restart", "postgres-multimodal"],
+                       capture_output=True, check=True, timeout=60)
+        for _ in range(30):
+            try:
+                test_conn = psycopg2.connect(**DB_CONFIG)
+                test_conn.close()
+                break
+            except Exception:
+                time.sleep(1)
+        print("  Cache de PostgreSQL limpiada (contenedor reiniciado).")
+    except Exception as e:
+        print(f"  ADVERTENCIA: no se pudo limpiar cache: {e}")
 
 
 def ejecutar_benchmark():
@@ -380,6 +481,7 @@ def ejecutar_benchmark():
     register_vector(conn)
     resultados = []
     resultados_disco = []
+    resultados_explain = []
 
     sub_map = load_subcategory_map(STYLES_CSV)
 
@@ -387,11 +489,48 @@ def ejecutar_benchmark():
         if not preparar_entorno(tamano, DB_CONFIG):
             continue
         
+        conn.close()
+        limpiar_cache_postgres()
+        conn = psycopg2.connect(**DB_CONFIG)
+        conn.autocommit = True
+        register_vector(conn)
+
+        print(f"  Midiendo baseline I/O frío para Linear_TFIDF...")
+        cold_io_texto = 0
+        cold_explain_texto = None
+        cold_io_imagen = 0
+        cold_explain_imagen = None
+        with conn.cursor() as cur:
+            cur.execute("""
+                EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+                SELECT doc_id, text_histogram FROM descriptors WHERE text_histogram IS NOT NULL
+            """)
+            exp = cur.fetchone()[0][0]
+            cold_io_texto = exp.get("Plan", {}).get("Shared Read Blocks", 0)
+            cold_explain_texto = exp
+
+            cur.execute("""
+                EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+                SELECT doc_id, image_histogram FROM descriptors WHERE image_histogram IS NOT NULL
+            """)
+            exp_img = cur.fetchone()[0][0]
+
+            # EXPLAIN no cuenta bloques TOAST, solo páginas de la tabla principal.
+            # Ambas queries (texto e imagen) leen las mismas páginas de tabla principal,
+            # por lo que el I/O frío es idéntico. La segunda EXPLAIN encuentra la tabla
+            # ya cachead, así que usamos el valor frío de la primera.
+            cold_io_imagen = cold_io_texto
+            cold_explain_imagen = exp_img
+
         orquestador = OnlineOrchestrator(db_config=DB_CONFIG, n_documents=tamano)
         resultados_disco.append(medir_disco(tamano))
         
+        subcategory_counts = count_subcategory_in_dataset_from_csv(tamano, sub_map)
+
         print(f"\nEvaluando Textos (Tamaño {tamano})")
-        for q in QUERIES_TEXTO:
+        for i, q in enumerate(QUERIES_TEXTO):
+            expected_sub = SUBCATEGORY_QUERIES[i] if i < len(SUBCATEGORY_QUERIES) else ""
+
             orquestador.reset_io_counters()
             ini = time.perf_counter()
             res_custom = orquestador.search_text(q, k=TOP_K)
@@ -399,25 +538,40 @@ def ejecutar_benchmark():
             io_spimi = orquestador.io_metrics()["disk_reads"]
 
             ini = time.perf_counter()
-            res_pg, io_pg = busqueda_gin_texto(conn, q)
+            res_tfidf, io_tfidf, explain_tfidf = busqueda_lineal_tfidf_texto(conn, orquestador, q, tamano, cold_io_texto, cold_explain_texto)
+            lat_tfidf = time.perf_counter() - ini
+
+            ini = time.perf_counter()
+            res_pg, io_pg, explain_gin = busqueda_gin_texto(conn, q)
             lat_pg = time.perf_counter() - ini
 
             ini = time.perf_counter()
-            res_gist, io_gist = busqueda_gist_texto(conn, q)
+            res_gist, io_gist, explain_gist = busqueda_gist_texto(conn, q)
             lat_gist = time.perf_counter() - ini
 
-            ini = time.perf_counter()
-            res_tfidf = busqueda_lineal_tfidf_texto(conn, orquestador, q, tamano)
-            lat_tfidf = time.perf_counter() - ini
+            resultados_explain.append({"tamano": tamano, "tipo": "Texto", "query": q, "motor": "Postgres_GIN", "explain": explain_gin})
+            resultados_explain.append({"tamano": tamano, "tipo": "Texto", "query": q, "motor": "Postgres_GiST", "explain": explain_gist})
+            resultados_explain.append({"tamano": tamano, "tipo": "Texto", "query": q, "motor": "Linear_TFIDF", "explain": explain_tfidf})
 
-            resultados.append({"tamano": tamano, "tipo": "Texto", "query": q, "motor": "Custom_SPIMI", "latencia": lat_custom, "throughput_qps": 1.0 / lat_custom if lat_custom > 0 else 0.0, "io": io_spimi, "recall": calcular_recall_subcategory(res_custom, sub_map, TOP_K)})
-            resultados.append({"tamano": tamano, "tipo": "Texto", "query": q, "motor": "Postgres_GIN", "latencia": lat_pg, "throughput_qps": 1.0 / lat_pg if lat_pg > 0 else 0.0, "io": io_pg, "recall": calcular_recall_subcategory(res_pg, sub_map, TOP_K)})
-            resultados.append({"tamano": tamano, "tipo": "Texto", "query": q, "motor": "Postgres_GiST", "latencia": lat_gist, "throughput_qps": 1.0 / lat_gist if lat_gist > 0 else 0.0, "io": io_gist, "recall": calcular_recall_subcategory(res_gist, sub_map, TOP_K)})
-            resultados.append({"tamano": tamano, "tipo": "Texto", "query": q, "motor": "Linear_TFIDF", "latencia": lat_tfidf, "throughput_qps": 1.0 / lat_tfidf if lat_tfidf > 0 else 0.0, "io": 0, "recall": calcular_recall_subcategory(res_tfidf, sub_map, TOP_K)})
+            for motor, res, lat, io_val in [
+                ("Custom_SPIMI", res_custom, lat_custom, io_spimi),
+                ("Linear_TFIDF", res_tfidf, lat_tfidf, io_tfidf),
+                ("Postgres_GIN", res_pg, lat_pg, io_pg),
+                ("Postgres_GiST", res_gist, lat_gist, io_gist),
+            ]:
+                precision = calcular_precision(res, sub_map, TOP_K, expected_sub)
+                recall = calcular_recall(res, sub_map, TOP_K, expected_sub, subcategory_counts)
+                resultados.append({
+                    "tamano": tamano, "tipo": "Texto", "query": q, "motor": motor,
+                    "latencia": lat, "throughput_qps": 1.0 / lat if lat > 0 else 0.0,
+                    "io": io_val, "precision": precision, "recall": recall
+                })
 
         print(f"\nEvaluando Imágenes (Tamaño {tamano})")
         for ruta_img in QUERY_IMAGENES:
             nombre_archivo = ruta_img.name
+            doc_id_img = int(ruta_img.stem)
+            expected_sub = sub_map.get(doc_id_img, "")
 
             orquestador.reset_io_counters()
             ini = time.perf_counter()
@@ -426,21 +580,34 @@ def ejecutar_benchmark():
             io_spimi = orquestador.io_metrics()["disk_reads"]
 
             ini = time.perf_counter()
-            res_pg, io_pg = busqueda_ivfflat_imagen(conn, orquestador, ruta_img)
-            lat_pg = time.perf_counter() - ini
-
-            ini = time.perf_counter()
-            res_hnsw, io_hnsw = busqueda_hnsw_imagen(conn, orquestador, ruta_img)
-            lat_hnsw = time.perf_counter() - ini
-
-            ini = time.perf_counter()
-            res_tfidf = busqueda_lineal_tfidf_imagen(conn, orquestador, ruta_img, tamano)
+            res_tfidf, io_tfidf, explain_tfidf = busqueda_lineal_tfidf_imagen(conn, orquestador, ruta_img, tamano, cold_io_imagen, cold_explain_imagen)
             lat_tfidf = time.perf_counter() - ini
 
-            resultados.append({"tamano": tamano, "tipo": "Imagen", "query": "IMG_" + nombre_archivo, "motor": "Custom_SPIMI", "latencia": lat_custom, "throughput_qps": 1.0 / lat_custom if lat_custom > 0 else 0.0, "io": io_spimi, "recall": calcular_recall_subcategory(res_custom, sub_map, TOP_K)})
-            resultados.append({"tamano": tamano, "tipo": "Imagen", "query": "IMG_" + nombre_archivo, "motor": "Postgres_IVFFlat", "latencia": lat_pg, "throughput_qps": 1.0 / lat_pg if lat_pg > 0 else 0.0, "io": io_pg, "recall": calcular_recall_subcategory(res_pg, sub_map, TOP_K)})
-            resultados.append({"tamano": tamano, "tipo": "Imagen", "query": "IMG_" + nombre_archivo, "motor": "Postgres_HNSW", "latencia": lat_hnsw, "throughput_qps": 1.0 / lat_hnsw if lat_hnsw > 0 else 0.0, "io": io_hnsw, "recall": calcular_recall_subcategory(res_hnsw, sub_map, TOP_K)})
-            resultados.append({"tamano": tamano, "tipo": "Imagen", "query": "IMG_" + nombre_archivo, "motor": "Linear_TFIDF", "latencia": lat_tfidf, "throughput_qps": 1.0 / lat_tfidf if lat_tfidf > 0 else 0.0, "io": 0, "recall": calcular_recall_subcategory(res_tfidf, sub_map, TOP_K)})
+            ini = time.perf_counter()
+            res_ivfflat, io_ivfflat, explain_ivfflat = busqueda_ivfflat_imagen(conn, orquestador, ruta_img)
+            lat_ivfflat = time.perf_counter() - ini
+
+            ini = time.perf_counter()
+            res_hnsw, io_hnsw, explain_hnsw = busqueda_hnsw_imagen(conn, orquestador, ruta_img)
+            lat_hnsw = time.perf_counter() - ini
+
+            resultados_explain.append({"tamano": tamano, "tipo": "Imagen", "query": "IMG_" + nombre_archivo, "motor": "Postgres_IVFFlat", "explain": explain_ivfflat})
+            resultados_explain.append({"tamano": tamano, "tipo": "Imagen", "query": "IMG_" + nombre_archivo, "motor": "Postgres_HNSW", "explain": explain_hnsw})
+            resultados_explain.append({"tamano": tamano, "tipo": "Imagen", "query": "IMG_" + nombre_archivo, "motor": "Linear_TFIDF", "explain": explain_tfidf})
+
+            for motor, res, lat, io_val in [
+                ("Custom_SPIMI", res_custom, lat_custom, io_spimi),
+                ("Linear_TFIDF", res_tfidf, lat_tfidf, io_tfidf),
+                ("Postgres_IVFFlat", res_ivfflat, lat_ivfflat, io_ivfflat),
+                ("Postgres_HNSW", res_hnsw, lat_hnsw, io_hnsw),
+            ]:
+                precision = calcular_precision(res, sub_map, TOP_K, expected_sub)
+                recall = calcular_recall(res, sub_map, TOP_K, expected_sub, subcategory_counts)
+                resultados.append({
+                    "tamano": tamano, "tipo": "Imagen", "query": "IMG_" + nombre_archivo, "motor": motor,
+                    "latencia": lat, "throughput_qps": 1.0 / lat if lat > 0 else 0.0,
+                    "io": io_val, "precision": precision, "recall": recall
+                })
 
         orquestador.close()
 
@@ -452,6 +619,12 @@ def ejecutar_benchmark():
         writer.writerows(resultados)
         
     print(f"\nBenchmark Completado, resultados guardados en: {resultados_dir / 'benchmark.csv'}")
+
+    print("Guardando EXPLAIN ANALYZE...")
+    import json
+    with open(resultados_dir / "explain_analyze.json", "w") as f:
+        json.dump(resultados_explain, f, indent=2)
+    print(f"  Explain guardado en: {resultados_dir / 'explain_analyze.json'}")
 
     print("Guardando métricas de disco...")
     with open(resultados_dir / "resultados_disco.csv", "w", newline="") as f:
@@ -472,7 +645,7 @@ def generar_graficos(resultados):
     agg: dict[tuple, dict] = defaultdict(lambda: defaultdict(list))
     for r in resultados:
         key = (r["tamano"], r["motor"], r["tipo"])
-        for metrica in ["latencia", "throughput_qps", "io", "recall"]:
+        for metrica in ["latencia", "throughput_qps", "io", "precision", "recall"]:
             agg[key][metrica].append(r[metrica])
 
     proms: dict[tuple, dict] = {}
@@ -481,9 +654,9 @@ def generar_graficos(resultados):
 
     with open(resultados_dir / "promedios.csv", "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["tamano", "motor", "tipo", "latencia_prom", "throughput_qps_prom", "io_prom", "recall_prom"])
+        w.writerow(["tamano", "motor", "tipo", "latencia_prom", "throughput_qps_prom", "io_prom", "precision_prom", "recall_prom"])
         for (tamano, motor, tipo), vals in sorted(proms.items()):
-            w.writerow([tamano, motor, tipo, vals.get("latencia", ""), vals.get("throughput_qps", ""), vals.get("io", ""), vals.get("recall", "")])
+            w.writerow([tamano, motor, tipo, vals.get("latencia", ""), vals.get("throughput_qps", ""), vals.get("io", ""), vals.get("precision", ""), vals.get("recall", "")])
     print(f"  Promedios guardados en: promedios.csv")
 
     sizes = sorted(set(r["tamano"] for r in resultados))
@@ -507,6 +680,7 @@ def generar_graficos(resultados):
         ("latencia", "Latencia (s)", "Latencia"),
         ("throughput_qps", "QPS", "Throughput"),
         ("io", "Bloques I/O", "Lecturas de Disco"),
+        ("precision", "Precision", "Precisión por Subcategoría"),
         ("recall", "Recall", "Recall por Subcategoría"),
     ]:
         for tipo, series in configs:

@@ -54,7 +54,7 @@ TEXT_FIELDS = [
 class OnlineOrchestrator:
     def __init__(self, db_config: Optional[dict] = None,
                  n_documents: int = 0,
-                 buffer_size: int = 1_000_000_000):
+                 buffer_size: int = 128_000_000):
         self.n_documents = n_documents
         data_subdir = DATA_DIR / str(n_documents)
         self._data_dir = data_subdir

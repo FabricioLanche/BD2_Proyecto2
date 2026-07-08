@@ -69,11 +69,11 @@ class PersistenceManager:
 
                 CREATE INDEX idx_descriptors_image_histogram_hnsw
                 ON descriptors
-                USING hnsw (image_histogram vector_l2_ops);
+                USING hnsw (image_histogram vector_cosine_ops);
             
                 CREATE INDEX idx_descriptors_image_histogram_ivfflat
                 ON descriptors
-                USING ivfflat (image_histogram vector_l2_ops)
+                USING ivfflat (image_histogram vector_cosine_ops)
                 WITH (lists = 100);
                 """)
 
@@ -127,6 +127,15 @@ class PersistenceManager:
                 self.connection.rollback()
                 logger.error(f"Error en insert_image_histogram doc_id={doc_id}: {e}")
                 raise
+
+    def insert_histogram(self, doc_id: int, histogram) -> None:
+        length = len(histogram)
+        if length == 1000:
+            self.insert_text_histogram(doc_id, histogram)
+        elif length == 512:
+            self.insert_image_histogram(doc_id, histogram)
+        else:
+            raise ValueError(f"Dimension de histograma no esperada: {length}")
 
     def insert_text_histogram(self, doc_id: int, histogram) -> None:
         with self._get_cursor() as cursor:

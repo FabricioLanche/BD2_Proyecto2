@@ -43,4 +43,4 @@ tools/
 
 # Artefactos generados por el orquestador offline (codebooks, indices, tfidf, vocab)
 Backend/Multimodal/Data/images
-
+main.tex

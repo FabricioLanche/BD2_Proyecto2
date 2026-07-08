@@ -146,8 +146,8 @@ class Search:
         t0 = time.perf_counter()
         t_btree, t_widf, t_norm = self._lazy_load('text')
         i_btree, i_widf, i_norm = self._lazy_load('image')
-        text_scores = self._normalize_scores(self._score(text_histogram, t_btree, t_widf, t_norm))
-        image_scores = self._normalize_scores(self._score(image_histogram, i_btree, i_widf, i_norm))
+        text_scores = self._score(text_histogram, t_btree, t_widf, t_norm)
+        image_scores = self._score(image_histogram, i_btree, i_widf, i_norm)
 
         combined: dict[int, float] = {}
         for doc_id, s in text_scores.items():
