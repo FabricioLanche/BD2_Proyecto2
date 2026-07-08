@@ -15,16 +15,20 @@ Sistema de búsqueda de productos de moda usando **imágenes** y **texto**, con 
 ## Instalación
 
 ```bash
-# 1. Extraer datos pre-generados (codebooks, índices, dumps)
+# 1. Clonar el repositorio
+git clone https://github.com/FabricioLanche/BD2_Proyecto2.git
+cd BD2_Proyecto2
+
+# 2. Extraer datos pre-generados (codebooks, índices, dumps)
 #    Omite el pipeline offline que tarda ~45 min.
 cd Backend/Multimodal/Data
 unzip data_gen.zip
 cd ../../..
 
-# 2. Iniciar servicios
+# 3. Iniciar servicios
 docker compose up --build -d
 
-# 3. Verificar que los 3 contenedores estén "Up" y "Healthy"
+# 4. Verificar que los 3 contenedores estén "Up" y "Healthy"
 docker ps
 ```
 
