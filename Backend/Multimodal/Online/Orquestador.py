@@ -318,13 +318,10 @@ class OnlineOrchestrator:
                 cursor.execute(query_real_img, (vector_string, vector_string))
                 res_img = {row[0]: row[1] for row in cursor.fetchall()}
                 
-                res_txt_norm = self.search._normalize_scores(res_txt)
-                res_img_norm = self.search._normalize_scores(res_img)
-                
                 combined = {}
-                for doc_id, s in res_txt_norm.items():
+                for doc_id, s in res_txt.items():
                     combined[doc_id] = combined.get(doc_id, 0.0) + (s * text_weight)
-                for doc_id, s in res_img_norm.items():
+                for doc_id, s in res_img.items():
                     combined[doc_id] = combined.get(doc_id, 0.0) + (s * image_weight)
                 
                 resultados_crudos = [(-s, doc_id) for doc_id, s in combined.items()]
@@ -372,8 +369,7 @@ class OnlineOrchestrator:
                 """
                 cursor.execute(query_real, (vector_string, vector_string))
                 res_img = {row[0]: row[1] for row in cursor.fetchall()}
-                res_norm = self.search._normalize_scores(res_img)
-                resultados_crudos = [(-s, doc_id) for doc_id, s in res_norm.items()]
+                resultados_crudos = [(-s, doc_id) for doc_id, s in res_img.items()]
 
         query_time_ms = round(pg_exec_time_ms, 3)
         metrics = {

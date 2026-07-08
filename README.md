@@ -18,8 +18,7 @@ Sistema de búsqueda de productos de moda usando **imágenes** y **texto**, con 
 # 1. Extraer datos pre-generados (codebooks, índices, dumps)
 #    Omite el pipeline offline que tarda ~45 min.
 cd Backend/Multimodal/Data
-tar -xf date_gen.zip    # Linux/Mac
-# o descomprimir con 7-Zip / WinRAR en Windows
+unzip data_gen.zip
 cd ../../..
 
 # 2. Iniciar servicios
@@ -65,7 +64,7 @@ Tras cada búsqueda se muestran: tiempo de consulta, páginas accedidas, hits en
 
 | Variable         |  Opciones                |
 |------------------|-------------------------|
-| `DATASET_SIZE`   | 1000, 10000, 20000, 30000, 40000 |
+| `DATASET_SIZE`   | 10000, 20000, 30000, 40000 |
 
 Los datos pre-generados incluyen índices SPIMI (B+Tree + heap), codebooks visuales/textuales, y el dump CSV con descriptores. Si el directorio `Backend/Multimodal/Data/{size}` no existe al arrancar, el entrypoint ejecuta el pipeline offline automáticamente. Las imágenes se cargan por URL externa.
 
@@ -82,9 +81,9 @@ BD2_Proyecto2/
 │   │   ├── Online/       # Motores Postgres + SPIMI
 │   │   ├── Offline/      # Pipeline de indexación
 │   │   ├── Utils/        # B+Tree, Hash Extensible, Buffer Manager
-│   │   └── Data/         # Codebooks, índices, CSVs, date_gen.zip
+│   │   └── Data/         # Codebooks, índices, CSVs, data_gen.zip
 │   └── ...
-├── Fronted/
+├── Frontend/
 │   ├── src/pages/        # VisualSearch, RecommendationEngine
 │   ├── src/components/   # ProductCard, UploadZone, FusionSlider
 │   ├── src/services/     # api.ts — llamadas al backend
